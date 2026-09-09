@@ -9,6 +9,7 @@ no request-shape changes required.
 
 import asyncio
 import uuid
+from contextlib import asynccontextmanager
 from functools import lru_cache
 
 from fastapi import Depends, FastAPI
@@ -20,7 +21,33 @@ from pydantic import BaseModel
 from cwym_agent.bridge import AGUIEventBridge
 from cwym_agent.pipeline import build_pipeline, run_pipeline
 
-app = FastAPI(title="CWYM-Agent")
+
+@lru_cache(maxsize=1)
+def get_pipeline() -> Pipeline:
+    """Build the (real-backend) pipeline, once.
+
+    A FastAPI dependency rather than a bare module-level singleton so
+    tests can override it (via ``app.dependency_overrides``) with a
+    stub-backed pipeline, without needing network access to the real
+    Qwen3/vLLM server or the real geodata services.
+    """
+
+    return build_pipeline()
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    # Eagerly build (and warm up) the pipeline at startup rather than
+    # lazily on the first request: RealDataServices.warm_up() fetches
+    # and embeds Hamburg's ~6,500 map layers, which takes a few minutes
+    # - better to pay that cost (and fail fast if the layer catalog or
+    # embedding model is unreachable) before accepting traffic than to
+    # block a user's first query.
+    get_pipeline()
+    yield
+
+
+app = FastAPI(title="CWYM-Agent", lifespan=lifespan)
 
 # The Masterportal dev server and deployed portal run on a different
 # origin than this backend; allow all origins for now since this is a
@@ -31,19 +58,6 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
-
-
-@lru_cache(maxsize=1)
-def get_pipeline() -> Pipeline:
-    """Lazily build the (real-backend) pipeline, once, on first request.
-
-    A FastAPI dependency rather than a bare module-level singleton so
-    tests can override it (via ``app.dependency_overrides``) with a
-    stub-backed pipeline, without needing network access to the real
-    Qwen3/vLLM server.
-    """
-
-    return build_pipeline()
 
 
 class QueryRequest(BaseModel):

@@ -18,21 +18,28 @@ from cwym_agent.components.master_agent import MasterAgentComponent
 from cwym_agent.components.result_aggregator import ResultAggregatorComponent
 from cwym_agent.components.text_response import TextResponseComponent
 from cwym_agent.llm.qwen3_client import Qwen3Client
-from cwym_agent.stubs.data_services import StubDataServices
+from cwym_agent.geodata.real_data_services import RealDataServices
 
 
 def build_pipeline(llm: Any | None = None, data_services: Any | None = None) -> Pipeline:
-    """Build the pipeline, wired to the real Qwen3 backend by default.
+    """Build the pipeline, wired to the real Qwen3 + geodata backends by default.
 
     ``llm``/``data_services`` can be overridden (e.g. with
     ``StubQwen3Generator``/``StubDataServices``) for fast, deterministic
-    tests that don't depend on network access to the real vLLM server.
-    Data services are still stubbed by default - real vector-search/geo
-    API integration is a separate, later phase.
+    tests that don't depend on network access or the real vLLM server.
+
+    If ``data_services`` exposes a ``warm_up()`` method (the real
+    ``RealDataServices`` does - it fetches and embeds Hamburg's ~6,500
+    map layers), it is called here so the cost is paid once, when the
+    pipeline is built, not on a user's first query.
     """
 
     llm = llm if llm is not None else Qwen3Client()
-    data_services = data_services if data_services is not None else StubDataServices()
+    data_services = data_services if data_services is not None else RealDataServices(llm=llm)
+
+    warm_up = getattr(data_services, "warm_up", None)
+    if callable(warm_up):
+        warm_up()
 
     pipeline = Pipeline()
 

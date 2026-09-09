@@ -9,11 +9,12 @@ provided.
 """
 
 from dataclasses import asdict, is_dataclass
+from typing import Any
 
 from haystack import component
 
 from cwym_agent.bridge import AGUIEventBridge
-from cwym_agent.stubs.data_services import StubDataServices
+from cwym_agent.geodata.real_data_services import RealDataServices
 
 
 def _serializable(value):
@@ -26,8 +27,8 @@ def _serializable(value):
 
 @component
 class AgentExecutorComponent:
-    def __init__(self, data_services: StubDataServices | None = None):
-        self.data_services = data_services if data_services is not None else StubDataServices()
+    def __init__(self, data_services: Any | None = None):
+        self.data_services = data_services if data_services is not None else RealDataServices()
 
     @component.output_types(execution_log=list)
     def run(self, plan_json: dict, bridge: AGUIEventBridge | None = None):
