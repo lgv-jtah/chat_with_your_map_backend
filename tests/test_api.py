@@ -1,10 +1,24 @@
-"""End-to-end test for the /api/query AG-UI SSE endpoint."""
+"""End-to-end test for the /api/query AG-UI SSE endpoint.
+
+Uses ``StubQwen3Generator``/``StubDataServices`` (via a pipeline
+dependency override), not the real Qwen3/vLLM backend, so this stays
+fast and deterministic regardless of network access. Real-backend
+behavior is covered separately in ``test_qwen3_client.py`` (mocked) and
+``test_qwen3_live.py`` (opt-in, real server).
+"""
 
 import json
 
 from fastapi.testclient import TestClient
 
-from cwym_agent.api.main import app
+from cwym_agent.api.main import app, get_pipeline
+from cwym_agent.pipeline import build_pipeline
+from cwym_agent.stubs.data_services import StubDataServices
+from cwym_agent.stubs.qwen3 import StubQwen3Generator
+
+app.dependency_overrides[get_pipeline] = lambda: build_pipeline(
+    llm=StubQwen3Generator(), data_services=StubDataServices()
+)
 
 client = TestClient(app)
 

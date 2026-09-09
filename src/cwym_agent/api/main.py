@@ -9,10 +9,12 @@ no request-shape changes required.
 
 import asyncio
 import uuid
+from functools import lru_cache
 
-from fastapi import FastAPI
+from fastapi import Depends, FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
+from haystack import Pipeline
 from pydantic import BaseModel
 
 from cwym_agent.bridge import AGUIEventBridge
@@ -30,10 +32,18 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# A single pipeline instance is reused across requests; Haystack
-# components are stateless here (all per-request state flows through
-# pipeline.run() arguments), so this is safe to share.
-_pipeline = build_pipeline()
+
+@lru_cache(maxsize=1)
+def get_pipeline() -> Pipeline:
+    """Lazily build the (real-backend) pipeline, once, on first request.
+
+    A FastAPI dependency rather than a bare module-level singleton so
+    tests can override it (via ``app.dependency_overrides``) with a
+    stub-backed pipeline, without needing network access to the real
+    Qwen3/vLLM server.
+    """
+
+    return build_pipeline()
 
 
 class QueryRequest(BaseModel):
@@ -43,7 +53,7 @@ class QueryRequest(BaseModel):
 
 
 @app.post("/api/query")
-async def query_endpoint(request: QueryRequest):
+async def query_endpoint(request: QueryRequest, pipeline: Pipeline = Depends(get_pipeline)):
     thread_id = str(uuid.uuid4())
     run_id = str(uuid.uuid4())
     bridge = AGUIEventBridge(thread_id=thread_id, run_id=run_id)
@@ -51,7 +61,7 @@ async def query_endpoint(request: QueryRequest):
     def run_pipeline_sync():
         bridge.run_started()
         try:
-            run_pipeline(_pipeline, request.query, bridge=bridge)
+            run_pipeline(pipeline, request.query, bridge=bridge)
             bridge.run_finished()
         except Exception as exc:  # noqa: BLE001 - surfaced to the client as RUN_ERROR
             bridge.run_error(str(exc))
