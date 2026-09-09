@@ -155,6 +155,7 @@ class Qwen3Client:
         self,
         prompt: str,
         streaming_callback: StreamingCallback | None = None,
+        max_tokens: int | None = None,
     ) -> str:
         """Generate the final German reply for the built response prompt.
 
@@ -162,6 +163,15 @@ class Qwen3Client:
         - the reasoning trace Qwen3 also produces for this step is
         intentionally discarded, since ``REASONING_*`` AG-UI events are
         scoped to the planning stage only (see architecture doc).
+
+        :param max_tokens: Overrides ``settings.max_tokens_generate``.
+            Qwen3 produces its reasoning trace *before* the final answer
+            even for short classification-style prompts (e.g. "reply
+            with just a number") - callers whose prompts invite lengthy
+            reasoning (as opposed to final natural-language replies,
+            which tend to need less) should pass a larger budget here,
+            or the reasoning can consume the whole budget and leave no
+            room for the actual answer.
         """
 
         stream = self._client.chat.completions.create(
@@ -170,7 +180,7 @@ class Qwen3Client:
                 {"role": "system", "content": _GENERATE_SYSTEM_PROMPT},
                 {"role": "user", "content": prompt},
             ],
-            max_tokens=self.settings.max_tokens_generate,
+            max_tokens=max_tokens if max_tokens is not None else self.settings.max_tokens_generate,
             stream=True,
         )
 
