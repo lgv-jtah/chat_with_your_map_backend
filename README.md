@@ -32,13 +32,44 @@ itself decides which of `location_extractor`/`layer_resolver`/
 `action_detector` (defined once in `cwym_agent.sub_agents`) are
 relevant to a given query - zero, one, or several may be called.
 
-**Data services:** still **stubbed** (`cwym_agent.stubs.data_services.
-StubDataServices`) - real vector-search/geodata-API integration is a
-separate, later phase.
+**Data services:** real, backed by Hamburg's public APIs
+(`cwym_agent.geodata`):
 
-Swapping in the real data services only requires replacing
-`StubDataServices` (passed into `build_pipeline(data_services=...)`) -
-the components, bridge and endpoint do not need to change.
+- `AddressResolver` resolves district/street names to coordinates via
+  `https://api.hamburg.de/addr_search` (public, unauthenticated). Prefers
+  district/city/county-level hits over individual streets, since a query
+  like "Wandsbek" almost always means the district, not one of the dozens
+  of "Wandsbeker ..." streets that otherwise dominate by raw
+  Elasticsearch score.
+- `LayerSearchService` does hybrid BM25 + embedding retrieval + cross-
+  encoder reranking (`InMemoryDocumentStore`, `sentence-transformers/
+  all-MiniLM-L6-v2`, `cross-encoder/mmarco-mMiniLMv2-L12-H384-v1`) over
+  Hamburg's ~6,500 map layers, fetched from `https://geodienste.hamburg.
+  de/layers/_search` (public, unauthenticated).
+- **Important finding:** pure text/embedding similarity cannot bridge
+  colloquial terms to Hamburg's official layer names when they share no
+  lexical overlap - e.g. "Fahrradstationen" scores far closer to
+  "Fahrradluftstationen" (bike air-pump stations) than to the actually-
+  correct "StadtRAD-Stationen Hamburg" (Hamburg's bike-sharing brand
+  name), verified empirically against the real catalog. So
+  `RealDataServices` adds two LLM-assisted steps around retrieval: Qwen3
+  first proposes likely official term(s) for the query (e.g.
+  "Fahrradstationen" -> "StadtRAD"), which are searched too and merged
+  with the original query's results, then Qwen3 picks the actual best
+  match from that shortlist. Both steps need a generous `max_tokens`
+  budget (`CWYM_LAYER_LLM_MAX_TOKENS`) since Qwen3's reasoning trace
+  precedes even a short classification-style answer.
+- `detect_action` stays simple local keyword matching - no external
+  service needed for that.
+
+The layer search index is built once, eagerly, at application startup
+(fetching + embedding ~6,500 documents takes a few minutes on CPU) - see
+`RealDataServices.warm_up()`, called from the FastAPI `lifespan` handler
+in `api/main.py`.
+
+Swapping either piece out only requires passing different objects into
+`build_pipeline(llm=..., data_services=...)` - the components, bridge
+and endpoint do not need to change.
 
 Note: the endpoint path is `/api/query` (not `/query` as in the
 architecture doc's pseudocode), to match what the `chatWithYourMap`
@@ -50,11 +81,19 @@ Masterportal addon frontend already calls.
 - [uv](https://docs.astral.sh/uv/)
 - Network access to the Qwen3 vLLM server (see `CWYM_QWEN3_BASE_URL`
   below; defaults to the internal deployment used during development)
+  and to Hamburg's public geodata APIs (`api.hamburg.de`,
+  `geodienste.hamburg.de`)
+
+Note: `torch` (a `sentence-transformers` dependency, used for layer
+embedding) is pinned to CPU-only wheels via `[tool.uv.sources]` in
+`pyproject.toml` - the default GPU/CUDA wheels are several GB larger for
+no benefit here, since embedding a small model for ~6,500 short
+documents doesn't need a GPU.
 
 ## Configuration
 
 All optional, read from the environment (see `cwym_agent.settings.
-Qwen3Settings`):
+Qwen3Settings` and `cwym_agent.geodata.settings.GeodataSettings`):
 
 | Variable | Default | Purpose |
 |---|---|---|
@@ -64,6 +103,16 @@ Qwen3Settings`):
 | `CWYM_QWEN3_TIMEOUT` | `60` | Request timeout (seconds) |
 | `CWYM_QWEN3_MAX_TOKENS_PLAN` | `1024` | Max tokens for the planning call (covers the reasoning trace + tool calls) |
 | `CWYM_QWEN3_MAX_TOKENS_GENERATE` | `512` | Max tokens for the final reply generation call |
+| `CWYM_LAYER_SEARCH_URL` | `https://geodienste.hamburg.de/layers/_search` | Hamburg's public layer catalog Elasticsearch endpoint |
+| `CWYM_LAYER_EMBED_MODEL` | `sentence-transformers/all-MiniLM-L6-v2` | Embedding model for layer search |
+| `CWYM_LAYER_RANKER_MODEL` | `cross-encoder/mmarco-mMiniLMv2-L12-H384-v1` | Cross-encoder reranker model |
+| `CWYM_LAYER_RETRIEVER_TOP_K` | `20` | Candidates pulled from each of BM25/embedding retrieval |
+| `CWYM_LAYER_RESULT_TOP_K` | `15` | Final candidate shortlist size passed to LLM disambiguation |
+| `CWYM_LAYER_FETCH_SIZE` | `10000` | Max layers fetched when building the index (covers the full ~6,500-layer catalog) |
+| `CWYM_LAYER_LLM_MAX_TOKENS` | `2048` | Token budget for the layer expansion/disambiguation LLM calls |
+| `CWYM_ADDRESS_SEARCH_URL` | `https://api.hamburg.de/addr_search` | Hamburg's public address/district search endpoint |
+| `CWYM_ADDRESS_RESULT_SIZE` | `20` | Candidates fetched per address query (needs enough headroom to find district/county-level hits alongside street matches) |
+| `CWYM_GEODATA_TIMEOUT` | `15` | Request timeout (seconds) for both geodata endpoints |
 
 ## Setup
 
@@ -76,6 +125,11 @@ uv sync
 ```bash
 uv run uvicorn cwym_agent.api.main:app --port 8082 --reload
 ```
+
+Note: startup takes a few minutes on first run - it eagerly fetches and
+embeds Hamburg's ~6,500 map layers (and downloads the embedding/reranker
+models on the very first run) before accepting traffic. Subsequent
+restarts re-fetch the catalog but reuse the already-downloaded models.
 
 ## Try it
 
@@ -98,12 +152,16 @@ uv run pytest
 
 Fast/deterministic by default - the pipeline/API tests
 (`test_api.py`) run against `StubQwen3Generator`/`StubDataServices` via
-a FastAPI dependency override, and `test_qwen3_client.py` mocks the
-HTTP layer directly, so no network access is required.
+a FastAPI dependency override, and `test_qwen3_client.py`/
+`test_address_resolver.py`/`test_layer_search.py`/
+`test_real_data_services.py` mock the HTTP layer directly, so no
+network access or model downloads are required.
 
-To additionally run the opt-in end-to-end test against the real
-Qwen3/vLLM server (requires network access to it):
+To additionally run the opt-in end-to-end tests against the real
+Qwen3/vLLM server and Hamburg's real geodata APIs (requires network
+access, and takes a few minutes for `test_geodata_live.py` since it
+builds the full layer index):
 
 ```bash
-CWYM_LIVE_TESTS=1 uv run pytest tests/test_qwen3_live.py
+CWYM_LIVE_TESTS=1 uv run pytest tests/test_qwen3_live.py tests/test_geodata_live.py
 ```
