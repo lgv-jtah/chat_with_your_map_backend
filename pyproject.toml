@@ -11,7 +11,10 @@ dependencies = [
     "ag-ui-protocol>=0.1.22",
     "fastapi[standard]>=0.141.1",
     "haystack-ai>=3.1.1",
+    "httpx>=0.28.1",
     "openai>=1.0.0",
+    "sentence-transformers-haystack>=0.1.1",
+    "torch>=2.2",
     "uvicorn>=0.52.4",
 ]
 
@@ -24,7 +27,18 @@ build-backend = "uv_build"
 
 [dependency-groups]
 dev = [
-    "httpx>=0.28.1",
     "httpx2>=2.12.0",
     "pytest>=9.1.1",
 ]
+
+# The layer-search embedding model only needs CPU inference (a small
+# sentence-transformers model, not a training workload), so pin torch to
+# CPU-only wheels - the default GPU/CUDA wheels are multiple GB larger for
+# no benefit here.
+[tool.uv.sources]
+torch = [{ index = "pytorch-cpu" }]
+
+[[tool.uv.index]]
+name = "pytorch-cpu"
+url = "https://download.pytorch.org/whl/cpu"
+explicit = true

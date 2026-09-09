@@ -10,28 +10,7 @@ in the ``chatWithYourMap`` Masterportal addon frontend
 mode to this backend keeps the same demo experience.
 """
 
-from dataclasses import dataclass, field
-
-
-@dataclass
-class LocationMatch:
-    name: str
-    latitude: float
-    longitude: float
-    confidence: float
-
-
-@dataclass
-class LayerMatch:
-    name: str
-    layer_id: str
-    confidence: float
-
-
-@dataclass
-class ActionMatch:
-    action_type: str
-    confidence: float
+from cwym_agent.geodata.types import ActionMatch, LayerMatch, LocationMatch
 
 
 # Very small, deterministic "knowledge base" standing in for the real
