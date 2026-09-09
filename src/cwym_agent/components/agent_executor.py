@@ -27,7 +27,7 @@ def _serializable(value):
 @component
 class AgentExecutorComponent:
     def __init__(self, data_services: StubDataServices | None = None):
-        self.data_services = data_services or StubDataServices()
+        self.data_services = data_services if data_services is not None else StubDataServices()
 
     @component.output_types(execution_log=list)
     def run(self, plan_json: dict, bridge: AGUIEventBridge | None = None):

@@ -6,18 +6,19 @@ bridge as a ``TEXT_MESSAGE_*`` event sequence when a bridge is provided.
 """
 
 import uuid
+from typing import Any
 
 from ag_ui.core import TextMessageContentEvent, TextMessageEndEvent, TextMessageStartEvent
 from haystack import component
 
 from cwym_agent.bridge import AGUIEventBridge
-from cwym_agent.stubs.qwen3 import StubQwen3Generator
+from cwym_agent.llm.qwen3_client import Qwen3Client
 
 
 @component
 class TextResponseComponent:
-    def __init__(self, llm: StubQwen3Generator | None = None):
-        self.llm = llm or StubQwen3Generator()
+    def __init__(self, llm: Any | None = None):
+        self.llm = llm if llm is not None else Qwen3Client()
 
     @component.output_types(response_text=str)
     def run(self, aggregated: dict, query: str, bridge: AGUIEventBridge | None = None):
@@ -42,19 +43,38 @@ class TextResponseComponent:
         return {"response_text": response_text}
 
     def _build_response_prompt(self, aggregated: dict, query: str) -> str:
+        """Build the NLG instruction prompt handed to ``self.llm.generate``.
+
+        Describes what was resolved (location/layer/action, if any) so
+        the LLM can phrase a natural German reply - this prompt is an
+        *instruction*, not the reply itself; the real Qwen3 client
+        generates the actual text from it.
+        """
+
         locations = aggregated.get("locations") or []
         layer = aggregated.get("layer")
+        action = aggregated.get("action")
 
-        if layer and locations:
-            location_name = locations[0].name
+        facts: list[str] = []
+        if locations:
+            facts.append(f"Ort: {locations[0].name}")
+        if layer:
+            facts.append(f"Kartenebene: {layer.name}")
+        if action:
+            facts.append(f"Aktion: {action.action_type}")
+
+        if facts:
+            resolved = "; ".join(facts)
             return (
-                f"Ich habe deine Anfrage \"{query}\" bearbeitet und die "
-                f"Ebene \"{layer.name}\" identifiziert, die am besten zu "
-                f"deiner Suche passt. Ich zeige dir jetzt die relevanten "
-                f"Ergebnisse in {location_name} an."
+                f"Nutzeranfrage: \"{query}\"\n"
+                f"Aufgelöste Informationen: {resolved}\n"
+                "Formuliere eine kurze, natürliche deutsche Antwort, die "
+                "dem Nutzer mitteilt, was auf der Karte angezeigt wird."
             )
 
         return (
-            f"Ich habe deine Anfrage \"{query}\" verarbeitet und werde dir "
-            "helfen, die relevanten Informationen auf der Karte anzuzeigen."
+            f"Nutzeranfrage: \"{query}\"\n"
+            "Es konnten keine Ort/Kartenebene/Aktion aus der Anfrage "
+            "aufgelöst werden. Antworte kurz und freundlich auf Deutsch "
+            "und frage bei Bedarf nach mehr Details."
         )

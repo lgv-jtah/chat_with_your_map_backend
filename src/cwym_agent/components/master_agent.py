@@ -6,16 +6,18 @@ reasoning trace during planning, streamed into the AG-UI bridge as a
 ``REASONING_*`` event sequence when a bridge is provided.
 """
 
+from typing import Any
+
 from haystack import component
 
 from cwym_agent.bridge import AGUIEventBridge
-from cwym_agent.stubs.qwen3 import StubQwen3Generator
+from cwym_agent.llm.qwen3_client import Qwen3Client
 
 
 @component
 class MasterAgentComponent:
-    def __init__(self, llm: StubQwen3Generator | None = None):
-        self.llm = llm or StubQwen3Generator()
+    def __init__(self, llm: Any | None = None):
+        self.llm = llm if llm is not None else Qwen3Client()
 
     @component.output_types(plan_json=dict)
     def run(self, query: str, bridge: AGUIEventBridge | None = None):
