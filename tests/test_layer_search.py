@@ -4,6 +4,7 @@ access or embedding model needed for these.
 """
 
 import httpx
+import pytest
 
 from cwym_agent.geodata.layer_search import fetch_layer_documents
 from cwym_agent.geodata.settings import GeodataSettings
@@ -72,3 +73,41 @@ class TestFetchLayerDocuments:
 
     def test_empty_response_yields_no_documents(self):
         assert _fetch([]) == []
+
+
+class TestFetchLayerDocumentsRetry:
+    """The layer catalog endpoint is intermittently flaky in practice
+    (observed ~40% of requests timing out while others succeed in under
+    a second) - a single transient failure shouldn't crash app startup.
+    """
+
+    def test_retries_after_transient_failure_then_succeeds(self):
+        attempts = {"count": 0}
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            attempts["count"] += 1
+            if attempts["count"] < 3:
+                raise httpx.ReadTimeout("simulated flaky timeout", request=request)
+            return httpx.Response(
+                200,
+                json=_es_response([{"id": "1", "name": "Valid Layer"}]),
+            )
+
+        http_client = httpx.Client(transport=httpx.MockTransport(handler))
+        settings = GeodataSettings(layer_fetch_retries=5, layer_fetch_retry_backoff=0.0)
+
+        documents = fetch_layer_documents(settings, http_client=http_client)
+
+        assert attempts["count"] == 3
+        assert len(documents) == 1
+        assert documents[0].meta["layer_id"] == "1"
+
+    def test_raises_after_exhausting_retries(self):
+        def handler(request: httpx.Request) -> httpx.Response:
+            raise httpx.ReadTimeout("simulated persistent timeout", request=request)
+
+        http_client = httpx.Client(transport=httpx.MockTransport(handler))
+        settings = GeodataSettings(layer_fetch_retries=3, layer_fetch_retry_backoff=0.0)
+
+        with pytest.raises(httpx.ReadTimeout):
+            fetch_layer_documents(settings, http_client=http_client)

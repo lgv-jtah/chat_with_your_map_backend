@@ -8,6 +8,8 @@ no request-shape changes required.
 """
 
 import asyncio
+import logging
+import time
 import uuid
 from contextlib import asynccontextmanager
 from functools import lru_cache
@@ -20,6 +22,18 @@ from pydantic import BaseModel
 
 from cwym_agent.bridge import AGUIEventBridge
 from cwym_agent.pipeline import build_pipeline, run_pipeline
+
+# Configure a basic root handler so `cwym_agent.*` module loggers (used
+# for startup-progress messages - see the lifespan handler below, and
+# ``cwym_agent.geodata.layer_search``) are actually visible. Without
+# this, Python's root logger defaults to WARNING with no handler, so
+# `logger.info(...)` calls are silently dropped even though uvicorn's
+# *own* "INFO:     ..." lines (from its separately-configured loggers)
+# still show up - misleadingly making the app look silent/stuck during
+# the several-minutes-long startup warm-up.
+logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
+
+logger = logging.getLogger(__name__)
 
 
 @lru_cache(maxsize=1)
@@ -43,7 +57,15 @@ async def lifespan(app: FastAPI):
     # - better to pay that cost (and fail fast if the layer catalog or
     # embedding model is unreachable) before accepting traffic than to
     # block a user's first query.
+    logger.info(
+        "Warming up pipeline (fetching + embedding Hamburg's ~6,500 map "
+        "layers) - this takes a few minutes, especially on the first run "
+        "which also downloads the embedding/reranker models. Not stuck, "
+        "just slow; see progress below."
+    )
+    start = time.monotonic()
     get_pipeline()
+    logger.info("Pipeline warm-up finished in %.1fs", time.monotonic() - start)
     yield
 
 

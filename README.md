@@ -109,6 +109,8 @@ Qwen3Settings` and `cwym_agent.geodata.settings.GeodataSettings`):
 | `CWYM_LAYER_RETRIEVER_TOP_K` | `20` | Candidates pulled from each of BM25/embedding retrieval |
 | `CWYM_LAYER_RESULT_TOP_K` | `15` | Final candidate shortlist size passed to LLM disambiguation |
 | `CWYM_LAYER_FETCH_SIZE` | `10000` | Max layers fetched when building the index (covers the full ~6,500-layer catalog) |
+| `CWYM_LAYER_FETCH_RETRIES` | `5` | Retry attempts for the layer catalog fetch (this endpoint is intermittently flaky - some requests time out while others succeed in under a second) |
+| `CWYM_LAYER_FETCH_RETRY_BACKOFF` | `2` | Seconds to wait between layer catalog fetch retries |
 | `CWYM_LAYER_LLM_MAX_TOKENS` | `2048` | Token budget for the layer expansion/disambiguation LLM calls |
 | `CWYM_ADDRESS_SEARCH_URL` | `https://api.hamburg.de/addr_search` | Hamburg's public address/district search endpoint |
 | `CWYM_ADDRESS_RESULT_SIZE` | `20` | Candidates fetched per address query (needs enough headroom to find district/county-level hits alongside street matches) |
@@ -126,10 +128,28 @@ uv sync
 uv run uvicorn cwym_agent.api.main:app --port 8082 --reload
 ```
 
+(or `make run`, see below)
+
 Note: startup takes a few minutes on first run - it eagerly fetches and
 embeds Hamburg's ~6,500 map layers (and downloads the embedding/reranker
 models on the very first run) before accepting traffic. Subsequent
 restarts re-fetch the catalog but reuse the already-downloaded models.
+Startup progress (catalog fetch, embedding, index ready) is logged at
+INFO level, so it's clear the process is working rather than stuck.
+The layer catalog endpoint itself is intermittently flaky (some
+requests time out while others succeed in under a second); the fetch
+retries a few times with backoff (`CWYM_LAYER_FETCH_RETRIES`/
+`CWYM_LAYER_FETCH_RETRY_BACKOFF`) before giving up.
+
+## Makefile
+
+```bash
+make install    # uv sync
+make run        # uv run uvicorn ... --port 8082 --reload
+make test       # uv run pytest
+make test-live  # opt-in live tests against real Qwen3/geodata APIs
+make clean      # remove __pycache__/.pytest_cache
+```
 
 ## Try it
 

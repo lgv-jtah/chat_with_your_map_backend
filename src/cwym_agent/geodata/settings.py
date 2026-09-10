@@ -44,6 +44,16 @@ class GeodataSettings:
     layer_fetch_size: int = field(
         default_factory=lambda: _env_int("CWYM_LAYER_FETCH_SIZE", 10000)
     )
+    # The layer catalog endpoint is intermittently flaky (observed
+    # ~40% of requests timing out at 15s while others complete in
+    # under a second) - retry a handful of times with backoff rather
+    # than crashing app startup on a single transient timeout.
+    layer_fetch_retries: int = field(
+        default_factory=lambda: _env_int("CWYM_LAYER_FETCH_RETRIES", 5)
+    )
+    layer_fetch_retry_backoff: float = field(
+        default_factory=lambda: _env_float("CWYM_LAYER_FETCH_RETRY_BACKOFF", 2.0)
+    )
     # Budget for the LLM query-expansion/disambiguation calls in
     # RealDataServices - these need generous headroom since Qwen3's
     # reasoning trace precedes even a short final answer, and can be

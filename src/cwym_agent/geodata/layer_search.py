@@ -16,6 +16,7 @@ whole extra service just for this.
 """
 
 import logging
+import time
 
 import httpx
 from haystack import Document, Pipeline
@@ -37,15 +38,43 @@ logger = logging.getLogger(__name__)
 def fetch_layer_documents(
     settings: GeodataSettings, http_client: httpx.Client | None = None
 ) -> list[Document]:
-    """Fetch the full Hamburg layer catalog and convert it to Documents."""
+    """Fetch the full Hamburg layer catalog and convert it to Documents.
+
+    Retries on transient failures (this endpoint has been observed to
+    intermittently time out, seemingly unrelated to payload size - some
+    requests complete in under a second, others hang until the client
+    timeout) since this fetch happens once at application startup and a
+    single flaky request shouldn't crash the whole app.
+    """
 
     client = http_client or httpx.Client(timeout=settings.timeout)
-    response = client.get(
-        settings.layer_search_url,
-        params={"q": "*:*", "size": settings.layer_fetch_size},
-    )
-    response.raise_for_status()
-    es_results = response.json()
+    attempts = max(1, settings.layer_fetch_retries)
+
+    last_exc: httpx.HTTPError | None = None
+    for attempt in range(1, attempts + 1):
+        try:
+            response = client.get(
+                settings.layer_search_url,
+                params={"q": "*:*", "size": settings.layer_fetch_size},
+            )
+            response.raise_for_status()
+            es_results = response.json()
+            break
+        except httpx.HTTPError as exc:
+            last_exc = exc
+            logger.warning(
+                "Layer catalog fetch attempt %d/%d failed (%s); %s",
+                attempt,
+                attempts,
+                exc,
+                "retrying" if attempt < attempts else "giving up",
+            )
+            if attempt < attempts:
+                time.sleep(settings.layer_fetch_retry_backoff)
+    else:
+        assert last_exc is not None
+        raise last_exc
+
     hits = es_results.get("hits", {}).get("hits", [])
 
     documents = []
@@ -133,8 +162,16 @@ class LayerSearchService:
 
         documents = self._preloaded_documents
         if documents is None:
+            logger.info(
+                "Fetching Hamburg layer catalog from %s ...", self.settings.layer_search_url
+            )
             documents = fetch_layer_documents(self.settings, http_client=self._http_client)
-        logger.info("Indexing %d Hamburg layer documents", len(documents))
+        logger.info(
+            "Embedding %d Hamburg layer documents with %s - this takes a few "
+            "minutes on CPU (first run also downloads the model) ...",
+            len(documents),
+            self.settings.layer_embed_model,
+        )
 
         document_store = InMemoryDocumentStore(embedding_similarity_function="cosine")
 
@@ -142,6 +179,7 @@ class LayerSearchService:
         doc_embedder.warm_up()
         embedded_documents = doc_embedder.run(documents=documents)["documents"]
         document_store.write_documents(embedded_documents)
+        logger.info("Finished embedding %d layer documents", len(embedded_documents))
 
         pipeline = Pipeline()
         pipeline.add_component(
@@ -177,6 +215,7 @@ class LayerSearchService:
 
         pipeline.warm_up()
         self._pipeline = pipeline
+        logger.info("Layer search index ready (%d documents indexed)", len(embedded_documents))
 
     def search(self, query: str) -> list[LayerMatch]:
         """Return the best-matching layers for ``query``, best first.
