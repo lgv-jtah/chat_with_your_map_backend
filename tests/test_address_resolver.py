@@ -8,12 +8,23 @@ from cwym_agent.geodata.address_resolver import AddressResolver
 from cwym_agent.geodata.settings import GeodataSettings
 
 
-def _hit(searchfield: str, lon: float, lat: float, type_: str, score: float) -> dict:
+def _hit(
+    searchfield: str,
+    lon: float,
+    lat: float,
+    type_: str,
+    score: float,
+    geographicextent: dict | None = None,
+) -> dict:
+    properties = {"type": type_, "searchfield": searchfield}
+    if geographicextent is not None:
+        properties["geographicextent"] = geographicextent
+
     return {
         "_score": score,
         "_source": {
             "geometry": {"type": "Point", "coordinates": [lon, lat]},
-            "properties": {"type": type_, "searchfield": searchfield},
+            "properties": properties,
         },
     }
 
@@ -81,6 +92,39 @@ class TestResolve:
 
         assert result is not None
         assert result.confidence == 1.0
+
+    def test_district_hit_with_polygon_extent_populates_boundary(self):
+        polygon = {
+            "type": "Polygon",
+            "coordinates": [[[10.0, 53.5], [10.1, 53.5], [10.1, 53.6], [10.0, 53.6], [10.0, 53.5]]],
+            "crs": {"type": "name", "properties": {"name": "EPSG:4326"}},
+        }
+        hits = [_hit("Wandsbek", 10.11, 53.64, "District", 58.3, geographicextent=polygon)]
+        resolver = _client_for(hits)
+
+        result = resolver.resolve("Wandsbek")
+
+        assert result is not None
+        assert result.boundary == {"type": "Polygon", "coordinates": polygon["coordinates"]}
+
+    def test_street_hit_with_point_extent_leaves_boundary_none(self):
+        point_extent = {"type": "Point", "coordinates": [10.0, 53.55]}
+        hits = [_hit("Mönckebergstraße", 10.0, 53.55, "Street", 50.0, geographicextent=point_extent)]
+        resolver = _client_for(hits)
+
+        result = resolver.resolve("Mönckebergstraße")
+
+        assert result is not None
+        assert result.boundary is None
+
+    def test_hit_without_geographicextent_leaves_boundary_none(self):
+        hits = [_hit("Altona", 9.85, 53.59, "County", 57.7)]
+        resolver = _client_for(hits)
+
+        result = resolver.resolve("Altona")
+
+        assert result is not None
+        assert result.boundary is None
 
     def test_http_error_returns_none(self):
         def handler(request: httpx.Request) -> httpx.Response:

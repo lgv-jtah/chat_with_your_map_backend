@@ -9,9 +9,10 @@ This is a much lighter alternative to the ``HamburgAddressResolver``
 Haystack component found in the sister `udp-chatbot` project: that
 component returns a full ``geopandas.GeoDataFrame`` (via
 ``shapely``/``pyproj``) for downstream geoprocessing. CWYM only needs a
-map center (and optionally a bounding box to zoom to), which the raw
-JSON response already provides directly as plain WGS84
-``[longitude, latitude]`` - no geometry library needed.
+map center plus, for district/city/county-level hits, an area boundary
+polygon to draw/spatially restrict by (see ``cwym-agent-architecture.md``
+Section 9) - both come directly off the same raw JSON response as plain
+WGS84 GeoJSON, no geometry library needed.
 """
 
 import json
@@ -35,6 +36,12 @@ _SCORE_NORMALIZATION_CEILING = 100.0
 # the user almost always means the district/borough itself. These are
 # the "broad" (non-street/address) location types worth preferring.
 _BROAD_TYPES = frozenset({"state", "city", "county", "district"})
+
+# properties.geographicextent is a Polygon/MultiPolygon for district/
+# county/city-level hits, but the same field is just another Point for
+# street-level hits (same shape as properties.geometry) - only these
+# types are trustworthy as an area boundary.
+_AREA_GEOMETRY_TYPES = frozenset({"Polygon", "MultiPolygon"})
 
 
 class AddressResolver:
@@ -134,4 +141,22 @@ class AddressResolver:
             latitude=latitude,
             longitude=longitude,
             confidence=confidence,
+            boundary=AddressResolver._extract_boundary(properties),
         )
+
+    @staticmethod
+    def _extract_boundary(properties: dict) -> dict | None:
+        """Extract a district/city/county-level area boundary, if any.
+
+        ``properties.geographicextent`` carries a Polygon/MultiPolygon for
+        broad-level hits, but the same field is just another Point for
+        street-level hits - only the former is a usable boundary. Any
+        nonstandard ``crs`` member is stripped so the wire payload is
+        plain GeoJSON, as the MapCommand schema promises.
+        """
+
+        extent = properties.get("geographicextent")
+        if not isinstance(extent, dict) or extent.get("type") not in _AREA_GEOMETRY_TYPES:
+            return None
+
+        return {"type": extent["type"], "coordinates": extent.get("coordinates")}

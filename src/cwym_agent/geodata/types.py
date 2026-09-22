@@ -15,6 +15,10 @@ class LocationMatch:
     latitude: float
     longitude: float
     confidence: float
+    boundary: dict | None = None
+    """GeoJSON Polygon/MultiPolygon (WGS84), or None when the resolved hit
+    has no area geometry (street/address-level matches, or the source
+    endpoint's area field was itself a Point rather than a polygon)."""
 
 
 @dataclass
