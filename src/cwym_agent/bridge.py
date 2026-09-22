@@ -20,8 +20,6 @@ from ag_ui.core import (
     RunErrorEvent,
     RunFinishedEvent,
     RunStartedEvent,
-    StateDeltaEvent,
-    StateSnapshotEvent,
     TextMessageContentEvent,
     TextMessageEndEvent,
     TextMessageStartEvent,
@@ -116,15 +114,32 @@ class AGUIEventBridge:
         )
         return call_id
 
-    # -- map state ------------------------------------------------------
+    # -- map commands -----------------------------------------------------
 
-    def state_snapshot(self, snapshot: dict) -> None:
-        self.emit(StateSnapshotEvent(snapshot=snapshot))
+    def command(self, cmd: dict) -> str:
+        """Emit a full start/args/end/result TOOL_CALL_* cycle for one
+        ``MapCommand`` (see ``cwym_agent.map_commands``).
 
-    def state_delta(self, delta: list) -> None:
-        """``delta`` is a JSON Patch (RFC 6902) list of operations."""
+        Reuses ``cmd["commandId"]`` as the AG-UI ``tool_call_id`` - one
+        identity, not two, for easier frontend correlation - rather than
+        minting a fresh id the way ``tool_call()`` does for sub-agent
+        calls.
+        """
 
-        self.emit(StateDeltaEvent(delta=delta))
+        call_id = cmd["commandId"]
+        self.emit(ToolCallStartEvent(tool_call_id=call_id, tool_call_name="command_builder"))
+        self.emit(
+            ToolCallArgsEvent(tool_call_id=call_id, delta=json.dumps({"type": cmd["type"]}))
+        )
+        self.emit(ToolCallEndEvent(tool_call_id=call_id))
+        self.emit(
+            ToolCallResultEvent(
+                message_id=str(uuid.uuid4()),
+                tool_call_id=call_id,
+                content=json.dumps(cmd),
+            )
+        )
+        return call_id
 
     # -- final text response ---------------------------------------------
 

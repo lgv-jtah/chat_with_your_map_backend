@@ -31,6 +31,23 @@ def _parse_sse_events(text: str) -> list[dict]:
     return events
 
 
+def _command_builder_events(events: list[dict]) -> list[dict]:
+    """``TOOL_CALL_RESULT`` carries no ``toolCallName`` of its own, so
+    correlate each result back to the ``toolCallName`` seen on the
+    matching ``TOOL_CALL_START`` for the same ``toolCallId``."""
+
+    id_to_name = {
+        event["toolCallId"]: event["toolCallName"]
+        for event in events
+        if event["type"] == "TOOL_CALL_START"
+    }
+    return [
+        json.loads(event["content"])
+        for event in events
+        if event["type"] == "TOOL_CALL_RESULT" and id_to_name.get(event["toolCallId"]) == "command_builder"
+    ]
+
+
 def test_health_endpoint():
     response = client.get("/health")
 
@@ -55,8 +72,9 @@ def test_query_endpoint_streams_expected_agui_event_sequence():
     events = _parse_sse_events(body)
     event_types = [event["type"] for event in events]
 
-    # Reasoning, tool calls, state snapshot and the text message must all
-    # appear, in this relative order, between RUN_STARTED and RUN_FINISHED.
+    # Reasoning, tool calls, the MapCommand stream and the text message
+    # must all appear, in this relative order, between RUN_STARTED and
+    # RUN_FINISHED.
     assert event_types[0] == "RUN_STARTED"
     assert event_types[-1] == "RUN_FINISHED"
     assert "RUN_ERROR" not in event_types
@@ -66,17 +84,53 @@ def test_query_endpoint_streams_expected_agui_event_sequence():
 
     assert index_of("REASONING_START") < index_of("REASONING_END")
     assert index_of("REASONING_END") < index_of("TOOL_CALL_START")
-    assert event_types.count("TOOL_CALL_START") == 3
-    assert index_of("TOOL_CALL_END") < index_of("STATE_SNAPSHOT")
-    assert index_of("STATE_SNAPSHOT") < index_of("TEXT_MESSAGE_START")
+
+    tool_call_starts = [event for event in events if event["type"] == "TOOL_CALL_START"]
+    sub_agent_starts = [
+        event
+        for event in tool_call_starts
+        if event["toolCallName"] in {"location_extractor", "layer_resolver", "action_detector"}
+    ]
+    command_starts = [
+        event for event in tool_call_starts if event["toolCallName"] == "command_builder"
+    ]
+    assert len(sub_agent_starts) == 3
+    assert len(command_starts) == 2
+
+    commands = _command_builder_events(events)
+    assert len(commands) == 2
+
+    activate_layer = next(cmd for cmd in commands if cmd["type"] == "ACTIVATE_LAYER")
+    assert activate_layer["payload"]["layerIds"] == ["27764"]
+
+    navigate = next(cmd for cmd in commands if cmd["type"] == "NAVIGATE_TO_LOCATION")
+    assert navigate["payload"]["locations"][0]["name"] == "Wandsbek"
+    assert navigate["payload"]["locations"][0]["coordinates"] == {
+        "lon": 10.0755348,
+        "lat": 53.5760029,
+    }
+
+    # Sub-agent tool calls finish before the MapCommand stream starts, and
+    # the last MapCommand result precedes the text message.
+    id_to_name = {event["toolCallId"]: event["toolCallName"] for event in tool_call_starts}
+    last_sub_agent_start_index = max(
+        i for i, event in enumerate(events)
+        if event["type"] == "TOOL_CALL_START" and event["toolCallName"] != "command_builder"
+    )
+    first_command_start_index = min(
+        i for i, event in enumerate(events)
+        if event["type"] == "TOOL_CALL_START" and event["toolCallName"] == "command_builder"
+    )
+    assert last_sub_agent_start_index < first_command_start_index
+
+    last_command_result_index = max(
+        i
+        for i, event in enumerate(events)
+        if event["type"] == "TOOL_CALL_RESULT" and id_to_name.get(event["toolCallId"]) == "command_builder"
+    )
+    assert last_command_result_index < index_of("TEXT_MESSAGE_START")
     assert index_of("TEXT_MESSAGE_START") < index_of("TEXT_MESSAGE_END")
     assert index_of("TEXT_MESSAGE_END") < index_of("RUN_FINISHED")
-
-    # The resolved location and layer must be reflected in the map state
-    # snapshot, so the frontend can patch its Vuex store directly.
-    snapshot_event = events[index_of("STATE_SNAPSHOT")]
-    assert snapshot_event["snapshot"]["center"]["latitude"] == 53.5760029
-    assert snapshot_event["snapshot"]["layers"][0]["name"] == "StadtRAD-Stationen Hamburg"
 
     # The streamed text message content, once joined, must be non-empty.
     text_deltas = [
@@ -96,6 +150,57 @@ def test_query_endpoint_default_query_still_resolves_hamburg():
         body = "".join(response.iter_text())
 
     events = _parse_sse_events(body)
-    snapshot_event = next(event for event in events if event["type"] == "STATE_SNAPSHOT")
+    commands = _command_builder_events(events)
+    navigate = next(cmd for cmd in commands if cmd["type"] == "NAVIGATE_TO_LOCATION")
 
-    assert snapshot_event["snapshot"]["center"]["latitude"] == 53.5511
+    assert navigate["payload"]["locations"][0]["coordinates"] == {
+        "lon": 9.9937,
+        "lat": 53.5511,
+    }
+
+
+def test_query_endpoint_unactionable_action_produces_zero_commands():
+    """A resolved action with no consuming command logic yet ("Filter") is a
+    legitimate zero-MapCommand turn (architecture doc Section 5) - the run
+    still finishes normally with a text reply, just no map commands."""
+
+    with client.stream(
+        "POST",
+        "/api/query",
+        json={"query": "Filtere Krankenhäuser in Altona"},
+    ) as response:
+        assert response.status_code == 200
+        body = "".join(response.iter_text())
+
+    events = _parse_sse_events(body)
+    event_types = [event["type"] for event in events]
+
+    assert "RUN_ERROR" not in event_types
+    assert event_types[-1] == "RUN_FINISHED"
+    assert _command_builder_events(events) == []
+
+    text_deltas = [
+        event["delta"] for event in events if event["type"] == "TEXT_MESSAGE_CONTENT"
+    ]
+    assert "".join(text_deltas).strip() != ""
+
+
+def test_query_endpoint_open_contact_form_emits_open_tool_command():
+    with client.stream(
+        "POST",
+        "/api/query",
+        json={"query": "Kannst du mir das Kontaktformular öffnen"},
+    ) as response:
+        assert response.status_code == 200
+        body = "".join(response.iter_text())
+
+    events = _parse_sse_events(body)
+    event_types = [event["type"] for event in events]
+
+    assert "RUN_ERROR" not in event_types
+    assert event_types[-1] == "RUN_FINISHED"
+
+    commands = _command_builder_events(events)
+    assert len(commands) == 1
+    assert commands[0]["type"] == "OPEN_TOOL"
+    assert commands[0]["payload"]["toolName"] == "CONTACT"
