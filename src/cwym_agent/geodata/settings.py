@@ -72,3 +72,12 @@ class GeodataSettings:
     )
 
     timeout: float = field(default_factory=lambda: _env_float("CWYM_GEODATA_TIMEOUT", 15.0))
+
+    # How long PortalCatalogResolver trusts a previously-fetched
+    # config.json before re-fetching (cwym-agent-architecture.md Section
+    # 8) - a plain TTL rather than the doc's ETag/conditional-GET refresh,
+    # since portal configs change rarely and a single real deployment
+    # doesn't need that extra complexity yet.
+    portal_catalog_cache_ttl: float = field(
+        default_factory=lambda: _env_float("CWYM_PORTAL_CATALOG_CACHE_TTL", 600.0)
+    )
