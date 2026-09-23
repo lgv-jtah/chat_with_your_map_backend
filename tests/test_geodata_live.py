@@ -12,10 +12,12 @@ this must be tested against the real model, not a mock.
 
 import os
 
+import httpx
 import pytest
 
 from cwym_agent.geodata.address_resolver import AddressResolver
 from cwym_agent.geodata.real_data_services import RealDataServices
+from cwym_agent.geodata.types import LayerMatch
 
 pytestmark = pytest.mark.skipif(
     os.environ.get("CWYM_LIVE_TESTS") != "1",
@@ -90,6 +92,54 @@ def test_layer_scoping_excludes_layers_outside_allowed_ids(
     )
     assert scoped_in is not None
     assert scoped_in.layer_id == "27764"
+
+
+def test_filter_agent_spatial_predicate_narrows_to_district(
+    real_data_services: RealDataServices,
+):
+    """Section 9: FilterAgent's S_INTERSECTS predicate must actually
+    restrict results to the given district, not just accept a filter
+    param cosmetically. Uses the known real Krankenhäuser OAF layer
+    directly (not resolve_layer's free-text search) so this test
+    exercises FilterAgent's own CQL2/HTTP behavior deterministically,
+    independent of retrieval/disambiguation nondeterminism - already
+    covered by the other tests in this file.
+
+    Asserts a strict narrowing (some hospitals, but fewer than the
+    citywide total) rather than an exact count: AddressResolver's
+    "Wandsbek" match is the Bezirk (borough), not the smaller
+    Stadtteil of the same name - a real, pre-existing characteristic
+    of AddressResolver's own district-selection logic, unrelated to
+    FilterAgent - so the exact count isn't a stable thing to pin a
+    test to."""
+
+    hospitals_oaf_layer = LayerMatch(
+        name="Krankenhäuser",
+        layer_id="27714",
+        confidence=1.0,
+        typ="OAF",
+        url="https://api.hamburg.de/datasets/v1/krankenhaeuser",
+        collection="gesundheit_krankenhaeuser",
+    )
+    wandsbek = real_data_services.resolve_locations("Wandsbek")[0]
+    assert wandsbek.boundary is not None
+
+    # No attribute condition and no location -> nothing to filter by,
+    # a legitimate "skip" per FilterAgent's own design (see
+    # command_builder.py's _build_filter_commands) - not the same thing
+    # as "return every feature unfiltered".
+    assert real_data_services.apply_filter("Krankenhäuser", hospitals_oaf_layer, location=None) is None
+
+    citywide_total = httpx.get(
+        f"{hospitals_oaf_layer.url}/collections/{hospitals_oaf_layer.collection}/items", params={"limit": 1}
+    ).json()["numberMatched"]
+
+    scoped = real_data_services.apply_filter(
+        "Krankenhäuser in Wandsbek", hospitals_oaf_layer, location=wandsbek
+    )
+    assert scoped is not None
+    assert 0 < scoped.number_matched < citywide_total
+    assert len(scoped.features["features"]) == scoped.number_matched
 
 
 def test_bare_hamburg_query_uses_city_center(real_data_services: RealDataServices):
