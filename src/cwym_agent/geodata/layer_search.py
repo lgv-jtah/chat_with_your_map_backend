@@ -136,6 +136,7 @@ def _hit_to_document(source: dict) -> Document | None:
             "layer_name": layer_name,
             "typ": source.get("typ"),
             "url": source.get("url"),
+            "collection": source.get("collection"),
             "short_description": short_description,
         },
     )
@@ -265,6 +266,9 @@ class LayerSearchService:
                 layer_id=doc.meta.get("layer_id", ""),
                 confidence=doc.score if doc.score is not None else 0.0,
                 description=doc.meta.get("short_description", ""),
+                typ=doc.meta.get("typ"),
+                url=doc.meta.get("url"),
+                collection=doc.meta.get("collection"),
             )
             for doc in documents
         ]

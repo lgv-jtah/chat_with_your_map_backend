@@ -81,3 +81,17 @@ class GeodataSettings:
     portal_catalog_cache_ttl: float = field(
         default_factory=lambda: _env_float("CWYM_PORTAL_CATALOG_CACHE_TTL", 600.0)
     )
+
+    # FilterAgent (cwym-agent-architecture.md Section 9): CQL2 filtering
+    # against a layer's own OGC API Features endpoint.
+    filter_queryables_cache_ttl: float = field(
+        default_factory=lambda: _env_float("CWYM_FILTER_QUERYABLES_CACHE_TTL", 3600.0)
+    )
+    filter_result_limit: int = field(
+        default_factory=lambda: _env_int("CWYM_FILTER_RESULT_LIMIT", 500)
+    )
+    # Same rationale as layer_llm_max_tokens - condition extraction is a
+    # small-output task but Qwen3's reasoning trace precedes it.
+    filter_llm_max_tokens: int = field(
+        default_factory=lambda: _env_int("CWYM_FILTER_LLM_MAX_TOKENS", 2048)
+    )
