@@ -10,7 +10,7 @@ in the ``chatWithYourMap`` Masterportal addon frontend
 mode to this backend keeps the same demo experience.
 """
 
-from cwym_agent.geodata.types import ActionMatch, LayerMatch, LocationMatch
+from cwym_agent.geodata.types import ActionMatch, FilterResult, LayerMatch, LocationMatch
 
 
 # Very small, deterministic "knowledge base" standing in for the real
@@ -76,6 +76,32 @@ class StubDataServices:
                 return layer
 
         return _DEFAULT_LAYER
+
+    def apply_filter(
+        self, query: str, layer: LayerMatch | None, location: LocationMatch | None = None
+    ) -> FilterResult | None:
+        # Only the demo hospital layer has a canned filtered result, so
+        # tests have something concrete (and a non-OAF-shaped fixture)
+        # to assert an APPLY_FILTER MapCommand against.
+        if layer is None or layer.layer_id != "18452":
+            return None
+
+        return FilterResult(
+            layer_id=layer.layer_id,
+            features={
+                "type": "FeatureCollection",
+                "features": [
+                    {
+                        "type": "Feature",
+                        "id": 1,
+                        "geometry": {"type": "Point", "coordinates": [10.0, 53.55]},
+                        "properties": {"name": "Demo-Krankenhaus"},
+                    }
+                ],
+            },
+            number_matched=1,
+            label=location.name if location else None,
+        )
 
     def detect_action(self, query: str) -> ActionMatch:
         lowered = query.lower()

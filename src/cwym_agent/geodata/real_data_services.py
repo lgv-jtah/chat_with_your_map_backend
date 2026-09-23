@@ -34,9 +34,10 @@ from collections.abc import Collection
 from typing import Any
 
 from cwym_agent.geodata.address_resolver import AddressResolver
+from cwym_agent.geodata.filter_agent import FilterAgent
 from cwym_agent.geodata.layer_search import LayerSearchService
 from cwym_agent.geodata.settings import GeodataSettings
-from cwym_agent.geodata.types import ActionMatch, LayerMatch, LocationMatch
+from cwym_agent.geodata.types import ActionMatch, FilterResult, LayerMatch, LocationMatch
 from cwym_agent.llm.qwen3_client import Qwen3Client
 
 logger = logging.getLogger(__name__)
@@ -117,12 +118,14 @@ class RealDataServices:
         settings: GeodataSettings | None = None,
         address_resolver: AddressResolver | None = None,
         layer_search: LayerSearchService | None = None,
+        filter_agent: FilterAgent | None = None,
         llm: Any | None = None,
     ):
         self.settings = settings or GeodataSettings()
         self.address_resolver = address_resolver or AddressResolver(self.settings)
         self.layer_search = layer_search or LayerSearchService(self.settings)
         self.llm = llm if llm is not None else Qwen3Client()
+        self.filter_agent = filter_agent or FilterAgent(self.settings, llm=self.llm)
 
     def warm_up(self) -> None:
         """Eagerly build the layer search index.
@@ -233,6 +236,17 @@ class RealDataServices:
             return None
 
         return candidates[index - 1]
+
+    def apply_filter(
+        self, query: str, layer: LayerMatch | None, location: LocationMatch | None = None
+    ) -> FilterResult | None:
+        """:param layer: the already-resolved layer to filter (from this
+        turn's layer_resolver call, if any).
+        :param location: the already-resolved location (from this turn's
+        location_extractor call, if any) - its boundary, when present,
+        becomes a spatial predicate (see FilterAgent)."""
+
+        return self.filter_agent.filter(query, layer, location)
 
     def detect_action(self, query: str) -> ActionMatch:
         lowered = query.lower()
