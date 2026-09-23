@@ -80,14 +80,15 @@ SUB_AGENTS: list[SubAgentSpec] = [
     SubAgentSpec(
         name="filter_agent",
         description=(
-            "Filtert eine Kartenebene anhand konkreter Bedingungen (z.B. "
+            "Filtert eine Kartenebene anhand konkreter Bedingungen. IMMER "
+            "aufrufen, wenn die Anfrage 'filter', 'filtere' oder ein "
+            "gleichbedeutendes Wort enthält, oder sonst eine konkrete "
+            "Einschränkung nennt statt nur eine Ebene anzuzeigen (z.B. "
             "'Krankenhäuser mit mehr als 100 Betten', 'Schulen in "
-            "Wandsbek'). Nur aufrufen, wenn die Anfrage tatsächlich "
-            "filtert/einschränkt, nicht nur eine Ebene anzeigt. Rufe in "
-            "diesem Fall IMMER auch layer_resolver auf (welche Ebene) "
-            "und, falls ein Ort genannt wird, location_extractor (für "
-            "eine räumliche Einschränkung) - filter_agent nutzt deren "
-            "Ergebnisse."
+            "Wandsbek'). Rufe in diesem Fall IMMER auch layer_resolver "
+            "auf (welche Ebene) und, falls ein Ort genannt wird, "
+            "location_extractor (für eine räumliche Einschränkung) - "
+            "filter_agent nutzt deren Ergebnisse."
         ),
         parameters={
             "type": "object",

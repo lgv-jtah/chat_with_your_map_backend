@@ -86,6 +86,20 @@ class TestBuildFilterCommands:
         assert commands[0]["payload"]["features"] == _FEATURES
         assert commands[0]["payload"]["label"] == "Wandsbek"
 
+    def test_filter_result_produces_apply_filter_even_without_action_detector(self):
+        """Qwen3's plan can call filter_agent without also calling
+        action_detector (confirmed live: a plan for "Filtere
+        Krankenhäuser in Wandsbek" called only location_extractor/
+        layer_resolver/filter_agent) - a resolved filter_result must not
+        depend on action_detector having run too."""
+
+        filter_result = FilterResult(layer_id="27714", features=_FEATURES, number_matched=1)
+        aggregated = _aggregated(None, layer=_LAYER, filter_result=filter_result)
+
+        commands = builder._build_commands(aggregated)
+
+        assert [cmd["type"] for cmd in commands] == ["APPLY_FILTER"]
+
     def test_filter_action_without_filter_result_produces_zero_commands(self):
         """FilterAgent found nothing to filter by, or the layer wasn't
         OGC API Features-filterable - a legitimate zero-MapCommand turn,

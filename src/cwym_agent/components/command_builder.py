@@ -73,6 +73,17 @@ class CommandBuilderComponent:
         return {"commands": commands}
 
     def _build_commands(self, aggregated: dict) -> list[dict]:
+        # Checked before the action_detector-gated branches below,
+        # unconditionally: Qwen3's plan can legitimately call filter_agent
+        # without also calling action_detector (the intent is already
+        # implied by calling filter_agent at all - confirmed live, a plan
+        # for "Filtere Krankenhäuser in Wandsbek" called only
+        # location_extractor/layer_resolver/filter_agent). A resolved
+        # filter_result is on its own strong enough evidence of filter
+        # intent; it shouldn't depend on action_detector also having run.
+        if aggregated.get("filter_result") is not None:
+            return self._build_filter_commands(aggregated)
+
         action = aggregated.get("action")
         if action is None:
             return []
@@ -87,9 +98,6 @@ class CommandBuilderComponent:
                     payload=OpenToolPayload(tool_name=tool_name),
                 ).model_dump(by_alias=True)
             ]
-
-        if action.action_type == "Filter":
-            return self._build_filter_commands(aggregated)
 
         if action.action_type not in _ACTIONABLE_TYPES:
             return []
