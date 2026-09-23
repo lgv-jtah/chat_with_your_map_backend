@@ -7,16 +7,22 @@ constructs these; the Masterportal frontend executes each one on receipt
 of the matching AG-UI ``TOOL_CALL_RESULT`` event.
 
 ``ACTIVATE_LAYER``, ``NAVIGATE_TO_LOCATION``, ``DRAW_BOUNDARY``,
-``APPLY_SPATIAL_FILTER`` (see Section 9) and ``OPEN_TOOL`` are actually
-built by ``CommandBuilderComponent`` today - the other five types are
-modeled here for closed-enum completeness (so the frontend dispatcher has
-a real schema to switch on) but nothing in the pipeline constructs them
+``APPLY_FILTER`` (see Section 9) and ``OPEN_TOOL`` are actually built by
+``CommandBuilderComponent`` today - the other four types are modeled
+here for closed-enum completeness (so the frontend dispatcher has a
+real schema to switch on) but nothing in the pipeline constructs them
 yet: ``DEACTIVATE_LAYER``/``ZOOM_TO_EXTENT`` need resolver data that
 doesn't exist yet (a "deactivate" action label, extent geometry), and
-``APPLY_FILTER``/``SET_LANGUAGE``/``HIGHLIGHT_FEATURE``/
-``CLEAR_HIGHLIGHTS`` need sub-agents/intent detection that are explicitly
-out of scope for this change (FilterAgent, language-switch detection).
-This is deliberate, not an oversight.
+``SET_LANGUAGE``/``HIGHLIGHT_FEATURE``/``CLEAR_HIGHLIGHTS`` need intent
+detection that's explicitly out of scope for this change (language-
+switch detection, an explicit "clear the map" intent). This is
+deliberate, not an oversight.
+
+``APPLY_FILTER``'s payload carries the actual matched GeoJSON features
+from ``FilterAgent``'s OGC API Features query as an ad-hoc overlay -
+the same "agent-computed geometry pushed to the map" pattern as
+``DRAW_BOUNDARY`` - not an abstract condition list for the frontend to
+re-interpret against an already-loaded layer.
 """
 
 from typing import Annotated, Literal, Union
@@ -43,12 +49,6 @@ class Coordinates(_CamelModel):
 class NamedLocation(_CamelModel):
     name: str
     coordinates: Coordinates
-
-
-class FilterCondition(_CamelModel):
-    field: str
-    operator: Literal["eq", "ne", "lt", "lte", "gt", "gte", "contains"]
-    value: object
 
 
 class OpenToolPrefill(_CamelModel):
@@ -95,13 +95,10 @@ class ClearHighlightsPayload(_CamelModel):
 
 class ApplyFilterPayload(_CamelModel):
     layer_id: str
-    conditions: list[FilterCondition]
-
-
-class ApplySpatialFilterPayload(_CamelModel):
-    layer_ids: list[str] = Field(min_length=1)
-    geometry: dict
-    mode: Literal["intersects", "within"] = "intersects"
+    features: dict
+    """A GeoJSON FeatureCollection - the matched features from
+    FilterAgent's OGC API Features query (Section 9), pushed as an
+    ad-hoc overlay."""
     label: str | None = None
 
 
@@ -161,11 +158,6 @@ class ApplyFilterCommand(_MapCommandBase):
     payload: ApplyFilterPayload
 
 
-class ApplySpatialFilterCommand(_MapCommandBase):
-    type: Literal["APPLY_SPATIAL_FILTER"] = "APPLY_SPATIAL_FILTER"
-    payload: ApplySpatialFilterPayload
-
-
 class OpenToolCommand(_MapCommandBase):
     type: Literal["OPEN_TOOL"] = "OPEN_TOOL"
     payload: OpenToolPayload
@@ -186,7 +178,6 @@ MapCommand = Annotated[
         HighlightFeatureCommand,
         ClearHighlightsCommand,
         ApplyFilterCommand,
-        ApplySpatialFilterCommand,
         OpenToolCommand,
         SetLanguageCommand,
     ],

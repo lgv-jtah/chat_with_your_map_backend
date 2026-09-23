@@ -5,12 +5,14 @@ via the bridge, so the frontend can execute ``ACTIVATE_LAYER`` while
 ``NAVIGATE_TO_LOCATION`` is still being built, instead of waiting for a
 single combined payload.
 
-When a resolved location carries a district-level area boundary (see
-``cwym-agent-architecture.md`` Section 9), the fixed build order is
-``ACTIVATE_LAYER -> DRAW_BOUNDARY -> NAVIGATE_TO_LOCATION ->
-APPLY_SPATIAL_FILTER`` - the boundary/spatial-filter emission is a
-structural signal (layer + area-geometry location resolved together),
-not tied to a specific ``action_type``; see Section 9.3 for why.
+When a resolved location carries a district-level area boundary, the
+build order for a "Zeigen"/"Navigieren" turn is ``ACTIVATE_LAYER ->
+DRAW_BOUNDARY -> NAVIGATE_TO_LOCATION`` - draws the district for visual
+context, but (unlike an earlier version of this component) does not
+spatially restrict the activated layer's own features; that's now
+``FilterAgent``'s job for a "Filter" turn, via real server-side OGC API
+Features CQL2 queries rather than client-side masking (see
+``cwym-agent-architecture.md`` Section 9).
 """
 
 import uuid
@@ -21,8 +23,8 @@ from cwym_agent.bridge import AGUIEventBridge
 from cwym_agent.map_commands import (
     ActivateLayerCommand,
     ActivateLayerPayload,
-    ApplySpatialFilterCommand,
-    ApplySpatialFilterPayload,
+    ApplyFilterCommand,
+    ApplyFilterPayload,
     Coordinates,
     DrawBoundaryCommand,
     DrawBoundaryPayload,
@@ -34,11 +36,8 @@ from cwym_agent.map_commands import (
 )
 
 # Action labels that map straight to ACTIVATE_LAYER/NAVIGATE_TO_LOCATION
-# commands. "Öffne" gets its own handling below (OPEN_TOOL). "Filter" is
-# a valid action_detector output with no consuming logic yet (FilterAgent
-# is explicitly out of scope here), so a turn resolving to it legitimately
-# produces zero commands, per the architecture doc's Section 5 design
-# principle.
+# commands. "Öffne" and "Filter" get their own handling below (OPEN_TOOL,
+# APPLY_FILTER respectively).
 _ACTIONABLE_TYPES = {"Zeigen", "Navigieren"}
 
 # Keyword -> OPEN_TOOL toolName, mirroring the keyword-matching style
@@ -89,6 +88,9 @@ class CommandBuilderComponent:
                 ).model_dump(by_alias=True)
             ]
 
+        if action.action_type == "Filter":
+            return self._build_filter_commands(aggregated)
+
         if action.action_type not in _ACTIONABLE_TYPES:
             return []
 
@@ -133,16 +135,26 @@ class CommandBuilderComponent:
                 ).model_dump(by_alias=True)
             )
 
-        if layer and boundary_location:
-            commands.append(
-                ApplySpatialFilterCommand(
-                    command_id=str(uuid.uuid4()),
-                    payload=ApplySpatialFilterPayload(
-                        layer_ids=[layer.layer_id],
-                        geometry=boundary_location.boundary,
-                        label=boundary_location.name,
-                    ),
-                ).model_dump(by_alias=True)
-            )
-
         return commands
+
+    def _build_filter_commands(self, aggregated: dict) -> list[dict]:
+        """A "Filter" turn stands alone: shows only FilterAgent's matched
+        features as an overlay, not the full unfiltered layer (unlike a
+        "Zeigen"/"Navigieren" turn's ACTIVATE_LAYER) - activating the
+        whole layer alongside a filtered subset would just show every
+        feature twice, once highlighted and once not."""
+
+        filter_result = aggregated.get("filter_result")
+        if filter_result is None:
+            return []
+
+        return [
+            ApplyFilterCommand(
+                command_id=str(uuid.uuid4()),
+                payload=ApplyFilterPayload(
+                    layer_id=filter_result.layer_id,
+                    features=filter_result.features,
+                    label=filter_result.label,
+                ),
+            ).model_dump(by_alias=True)
+        ]
