@@ -1,8 +1,9 @@
 """Shared sub-agent definitions.
 
-Single source of truth for the three sub-agents the pipeline can invoke
-(``location_extractor``, ``layer_resolver``, ``action_detector``): their
-names, human-readable descriptions and JSON argument schema.
+Single source of truth for the four sub-agents the pipeline can invoke
+(``location_extractor``, ``layer_resolver``, ``action_detector``,
+``filter_agent``): their names, human-readable descriptions and JSON
+argument schema.
 
 This is used both by ``Qwen3Client.plan()`` (to build the ``tools=``
 list offered to the model for native function calling) and by
@@ -71,6 +72,29 @@ SUB_AGENTS: list[SubAgentSpec] = [
                 "query": {
                     "type": "string",
                     "description": "Die Nutzeranfrage oder der relevante Aktionsanteil davon.",
+                }
+            },
+            "required": ["query"],
+        },
+    ),
+    SubAgentSpec(
+        name="filter_agent",
+        description=(
+            "Filtert eine Kartenebene anhand konkreter Bedingungen (z.B. "
+            "'Krankenhäuser mit mehr als 100 Betten', 'Schulen in "
+            "Wandsbek'). Nur aufrufen, wenn die Anfrage tatsächlich "
+            "filtert/einschränkt, nicht nur eine Ebene anzeigt. Rufe in "
+            "diesem Fall IMMER auch layer_resolver auf (welche Ebene) "
+            "und, falls ein Ort genannt wird, location_extractor (für "
+            "eine räumliche Einschränkung) - filter_agent nutzt deren "
+            "Ergebnisse."
+        ),
+        parameters={
+            "type": "object",
+            "properties": {
+                "query": {
+                    "type": "string",
+                    "description": "Die Nutzeranfrage oder der relevante Filteranteil davon.",
                 }
             },
             "required": ["query"],
