@@ -54,6 +54,7 @@ class TextResponseComponent:
         locations = aggregated.get("locations") or []
         layer = aggregated.get("layer")
         action = aggregated.get("action")
+        filter_result = aggregated.get("filter_result")
 
         facts: list[str] = []
         if locations:
@@ -62,6 +63,8 @@ class TextResponseComponent:
             facts.append(f"Kartenebene: {layer.name}")
         if action:
             facts.append(f"Aktion: {action.action_type}")
+        if filter_result:
+            facts.append(f"Gefilterte Ergebnisse: {filter_result.number_matched} Treffer")
 
         if facts:
             resolved = "; ".join(facts)
