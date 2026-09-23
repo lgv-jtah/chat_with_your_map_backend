@@ -17,6 +17,7 @@ whole extra service just for this.
 
 import logging
 import time
+from collections.abc import Collection
 
 import httpx
 from haystack import Document, Pipeline
@@ -33,6 +34,17 @@ from cwym_agent.geodata.settings import GeodataSettings
 from cwym_agent.geodata.types import LayerMatch
 
 logger = logging.getLogger(__name__)
+
+
+def _layer_id_filter(allowed_layer_ids: Collection[str] | None) -> dict | None:
+    """Build the Haystack document-store filter that scopes retrieval to
+    ``allowed_layer_ids`` (``PortalCatalogResolver``, Section 8), or
+    ``None`` for an unscoped search."""
+
+    if allowed_layer_ids is None:
+        return None
+
+    return {"field": "meta.layer_id", "operator": "in", "value": [str(i) for i in allowed_layer_ids]}
 
 
 def fetch_layer_documents(
@@ -217,7 +229,7 @@ class LayerSearchService:
         self._pipeline = pipeline
         logger.info("Layer search index ready (%d documents indexed)", len(embedded_documents))
 
-    def search(self, query: str) -> list[LayerMatch]:
+    def search(self, query: str, allowed_layer_ids: Collection[str] | None = None) -> list[LayerMatch]:
         """Return the best-matching layers for ``query``, best first.
 
         Returns a broader candidate pool (``layer_result_top_k``, default
@@ -227,15 +239,21 @@ class LayerSearchService:
         "StadtRAD") - see ``RealDataServices._select_layer_with_llm``,
         which disambiguates the final choice among these candidates using
         Qwen3's world knowledge.
+
+        :param allowed_layer_ids: when given, restricts retrieval to
+            these layer ids (``PortalCatalogResolver``, Section 8) rather
+            than searching the full Hamburg-wide index.
         """
 
         self.warm_up()
         assert self._pipeline is not None
 
+        filters = _layer_id_filter(allowed_layer_ids)
         result = self._pipeline.run(
             {
-                "bm25_retriever": {"query": query},
+                "bm25_retriever": {"query": query, "filters": filters},
                 "query_embedder": {"text": query},
+                "embedding_retriever": {"filters": filters},
                 "ranker": {"query": query},
             }
         )

@@ -59,13 +59,23 @@ def build_pipeline(llm: Any | None = None, data_services: Any | None = None) -> 
     return pipeline
 
 
-def run_pipeline(pipeline: Pipeline, query: str, bridge: AGUIEventBridge | None = None) -> str:
-    """Run the pipeline for one query, returning the final response text."""
+def run_pipeline(
+    pipeline: Pipeline,
+    query: str,
+    bridge: AGUIEventBridge | None = None,
+    allowed_layer_ids: list[str] | None = None,
+) -> str:
+    """Run the pipeline for one query, returning the final response text.
+
+    :param allowed_layer_ids: the requesting portal's own layer ids
+        (``PortalCatalogResolver``, Section 8), or ``None`` to search
+        Hamburg's full layer catalog unscoped.
+    """
 
     result = pipeline.run(
         data={
             "master_agent": {"query": query, "bridge": bridge},
-            "agent_executor": {"bridge": bridge},
+            "agent_executor": {"bridge": bridge, "allowed_layer_ids": allowed_layer_ids},
             "result_aggregator": {"query": query},
             "command_builder": {"bridge": bridge},
             "text_response": {"query": query, "bridge": bridge},

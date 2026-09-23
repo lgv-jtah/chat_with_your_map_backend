@@ -31,13 +31,18 @@ class AgentExecutorComponent:
         self.data_services = data_services if data_services is not None else RealDataServices()
 
     @component.output_types(execution_log=list)
-    def run(self, plan_json: dict, bridge: AGUIEventBridge | None = None):
+    def run(
+        self,
+        plan_json: dict,
+        bridge: AGUIEventBridge | None = None,
+        allowed_layer_ids: list[str] | None = None,
+    ):
         execution_log = []
 
         for step in plan_json.get("steps", []):
             agent_name = step["agent_name"]
             args = step.get("args", {})
-            result = self._run_sub_agent(agent_name, args)
+            result = self._run_sub_agent(agent_name, args, allowed_layer_ids)
 
             if bridge:
                 bridge.tool_call(agent_name, args, _serializable(result))
@@ -46,13 +51,13 @@ class AgentExecutorComponent:
 
         return {"execution_log": execution_log}
 
-    def _run_sub_agent(self, agent_name: str, args: dict):
+    def _run_sub_agent(self, agent_name: str, args: dict, allowed_layer_ids: list[str] | None):
         query = args.get("query", "")
 
         if agent_name == "location_extractor":
             return self.data_services.resolve_locations(query)
         if agent_name == "layer_resolver":
-            return self.data_services.resolve_layer(query)
+            return self.data_services.resolve_layer(query, allowed_layer_ids=allowed_layer_ids)
         if agent_name == "action_detector":
             return self.data_services.detect_action(query)
 

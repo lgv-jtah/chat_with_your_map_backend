@@ -65,7 +65,10 @@ class StubDataServices:
 
         return [_DEFAULT_LOCATION]
 
-    def resolve_layer(self, query: str) -> LayerMatch:
+    def resolve_layer(self, query: str, allowed_layer_ids=None) -> LayerMatch:
+        # allowed_layer_ids (Section 8 portal scoping) is accepted for
+        # interface parity with RealDataServices but not honored here -
+        # this stub's tiny fixed demo catalog doesn't need scoping.
         lowered = query.lower()
 
         for keywords, layer in _LAYERS:

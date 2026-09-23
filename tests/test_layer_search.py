@@ -6,8 +6,25 @@ access or embedding model needed for these.
 import httpx
 import pytest
 
-from cwym_agent.geodata.layer_search import fetch_layer_documents
+from cwym_agent.geodata.layer_search import _layer_id_filter, fetch_layer_documents
 from cwym_agent.geodata.settings import GeodataSettings
+
+
+class TestLayerIdFilter:
+    def test_none_allowed_ids_means_unscoped(self):
+        assert _layer_id_filter(None) is None
+
+    def test_builds_haystack_in_filter(self):
+        result = _layer_id_filter({"27764", "18105"})
+
+        assert result["field"] == "meta.layer_id"
+        assert result["operator"] == "in"
+        assert sorted(result["value"]) == ["18105", "27764"]
+
+    def test_coerces_ids_to_strings(self):
+        result = _layer_id_filter([1234])
+
+        assert result["value"] == ["1234"]
 
 
 def _es_response(hits: list[dict]) -> dict:

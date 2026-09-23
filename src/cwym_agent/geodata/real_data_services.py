@@ -30,6 +30,7 @@ earlier pipeline testing), so:
 
 import logging
 import re
+from collections.abc import Collection
 from typing import Any
 
 from cwym_agent.geodata.address_resolver import AddressResolver
@@ -145,12 +146,17 @@ class RealDataServices:
         match = self.address_resolver.resolve(query)
         return [match] if match else [_DEFAULT_LOCATION]
 
-    def resolve_layer(self, query: str) -> LayerMatch | None:
+    def resolve_layer(
+        self, query: str, allowed_layer_ids: Collection[str] | None = None
+    ) -> LayerMatch | None:
+        """:param allowed_layer_ids: when given, restricts resolution to
+        these layer ids (``PortalCatalogResolver``, Section 8)."""
+
         search_terms = [query, *self._expand_query_terms(query)]
 
         best_by_id: dict[str, LayerMatch] = {}
         for term in search_terms:
-            for candidate in self.layer_search.search(term):
+            for candidate in self.layer_search.search(term, allowed_layer_ids=allowed_layer_ids):
                 existing = best_by_id.get(candidate.layer_id)
                 if existing is None or candidate.confidence > existing.confidence:
                     best_by_id[candidate.layer_id] = candidate

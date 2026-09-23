@@ -25,9 +25,11 @@ class FakeLayerSearch:
     def __init__(self, results_by_query: dict[str, list[LayerMatch]]):
         self.results_by_query = results_by_query
         self.queries: list[str] = []
+        self.allowed_layer_ids_seen: list = []
 
-    def search(self, query: str) -> list[LayerMatch]:
+    def search(self, query: str, allowed_layer_ids=None) -> list[LayerMatch]:
         self.queries.append(query)
+        self.allowed_layer_ids_seen.append(allowed_layer_ids)
         return self.results_by_query.get(query, [])
 
 
@@ -92,6 +94,26 @@ class TestResolveLayer:
         assert result == right_match
         assert "Fahrradstationen" in layer_search.queries
         assert "StadtRAD" in layer_search.queries
+
+    def test_forwards_allowed_layer_ids_to_layer_search(self):
+        match = LayerMatch("StadtRAD-Stationen Hamburg", "27764", 0.9)
+        layer_search = FakeLayerSearch({"Fahrradstationen": [match]})
+        llm = _mock_llm([""])  # no expansion terms; single candidate, no disambiguation
+
+        service = RealDataServices(layer_search=layer_search, llm=llm)
+        service.resolve_layer("Fahrradstationen", allowed_layer_ids={"27764", "18105"})
+
+        assert layer_search.allowed_layer_ids_seen == [{"27764", "18105"}]
+
+    def test_no_allowed_layer_ids_means_unscoped(self):
+        match = LayerMatch("StadtRAD-Stationen Hamburg", "27764", 0.9)
+        layer_search = FakeLayerSearch({"Fahrradstationen": [match]})
+        llm = _mock_llm([""])
+
+        service = RealDataServices(layer_search=layer_search, llm=llm)
+        service.resolve_layer("Fahrradstationen")
+
+        assert layer_search.allowed_layer_ids_seen == [None]
 
     def test_no_candidates_returns_none(self):
         layer_search = FakeLayerSearch({})
