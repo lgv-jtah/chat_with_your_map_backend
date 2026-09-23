@@ -11,14 +11,31 @@ import json
 
 from fastapi.testclient import TestClient
 
-from cwym_agent.api.main import app, get_pipeline
+from cwym_agent.api.main import app, get_pipeline, get_portal_catalog_resolver
 from cwym_agent.pipeline import build_pipeline
 from cwym_agent.stubs.data_services import StubDataServices
 from cwym_agent.stubs.qwen3 import StubQwen3Generator
 
+class FakePortalCatalogResolver:
+    """Records the URL it's asked to resolve; returns a fixed id set for
+    any non-None URL, so API-level tests don't need real network access
+    (unit coverage for the resolver itself lives in
+    test_portal_catalog_resolver.py)."""
+
+    def __init__(self):
+        self.calls: list = []
+
+    def get_allowed_layer_ids(self, config_json_url):
+        self.calls.append(config_json_url)
+        return {"27764"} if config_json_url else None
+
+
 app.dependency_overrides[get_pipeline] = lambda: build_pipeline(
     llm=StubQwen3Generator(), data_services=StubDataServices()
 )
+
+fake_portal_catalog_resolver = FakePortalCatalogResolver()
+app.dependency_overrides[get_portal_catalog_resolver] = lambda: fake_portal_catalog_resolver
 
 client = TestClient(app)
 
@@ -204,3 +221,38 @@ def test_query_endpoint_open_contact_form_emits_open_tool_command():
     assert len(commands) == 1
     assert commands[0]["type"] == "OPEN_TOOL"
     assert commands[0]["payload"]["toolName"] == "CONTACT"
+
+
+def test_query_endpoint_forwards_portal_context_to_catalog_resolver():
+    """Section 8: a request carrying portal_context should have its
+    config_json_url resolved via PortalCatalogResolver before the
+    pipeline runs, so layer_resolver can be scoped to that portal."""
+
+    fake_portal_catalog_resolver.calls.clear()
+
+    with client.stream(
+        "POST",
+        "/api/query",
+        json={
+            "query": "Zeige mir Fahrradstationen in Wandsbek",
+            "portal_context": {"config_json_url": "https://portal.example/config.json"},
+        },
+    ) as response:
+        assert response.status_code == 200
+        body = "".join(response.iter_text())
+
+    events = _parse_sse_events(body)
+    assert "RUN_ERROR" not in [event["type"] for event in events]
+    assert fake_portal_catalog_resolver.calls == ["https://portal.example/config.json"]
+
+
+def test_query_endpoint_without_portal_context_stays_unscoped():
+    fake_portal_catalog_resolver.calls.clear()
+
+    with client.stream(
+        "POST", "/api/query", json={"query": "Zeige mir Fahrradstationen in Wandsbek"}
+    ) as response:
+        assert response.status_code == 200
+        "".join(response.iter_text())
+
+    assert fake_portal_catalog_resolver.calls == [None]

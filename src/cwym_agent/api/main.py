@@ -21,6 +21,7 @@ from haystack import Pipeline
 from pydantic import BaseModel
 
 from cwym_agent.bridge import AGUIEventBridge
+from cwym_agent.geodata.portal_catalog_resolver import PortalCatalogResolver
 from cwym_agent.pipeline import build_pipeline, run_pipeline
 
 # Configure a basic root handler so `cwym_agent.*` module loggers (used
@@ -47,6 +48,15 @@ def get_pipeline() -> Pipeline:
     """
 
     return build_pipeline()
+
+
+@lru_cache(maxsize=1)
+def get_portal_catalog_resolver() -> PortalCatalogResolver:
+    """A FastAPI dependency (same rationale as ``get_pipeline``): tests
+    override it with a fake resolver to assert on what URL it's called
+    with, without needing network access."""
+
+    return PortalCatalogResolver()
 
 
 @asynccontextmanager
@@ -82,22 +92,44 @@ app.add_middleware(
 )
 
 
+class PortalContext(BaseModel):
+    """Matches what the frontend already resolved to boot itself
+    (cwym-agent-architecture.md Section 8) - the backend never re-derives
+    portal URLs on its own. ``services_json_url`` is accepted for schema
+    parity with the doc but currently unused; see
+    ``PortalCatalogResolver``'s module docstring for why."""
+
+    config_json_url: str
+    services_json_url: str | None = None
+
+
 class QueryRequest(BaseModel):
     query: str
     include_reasoning: bool = False
     language: str = "German"
+    portal_context: PortalContext | None = None
 
 
 @app.post("/api/query")
-async def query_endpoint(request: QueryRequest, pipeline: Pipeline = Depends(get_pipeline)):
+async def query_endpoint(
+    request: QueryRequest,
+    pipeline: Pipeline = Depends(get_pipeline),
+    portal_catalog_resolver: PortalCatalogResolver = Depends(get_portal_catalog_resolver),
+):
     thread_id = str(uuid.uuid4())
     run_id = str(uuid.uuid4())
     bridge = AGUIEventBridge(thread_id=thread_id, run_id=run_id)
 
+    config_json_url = request.portal_context.config_json_url if request.portal_context else None
+    allowed_layer_ids = await asyncio.to_thread(
+        portal_catalog_resolver.get_allowed_layer_ids, config_json_url
+    )
+    allowed_layer_ids = list(allowed_layer_ids) if allowed_layer_ids is not None else None
+
     def run_pipeline_sync():
         bridge.run_started()
         try:
-            run_pipeline(pipeline, request.query, bridge=bridge)
+            run_pipeline(pipeline, request.query, bridge=bridge, allowed_layer_ids=allowed_layer_ids)
             bridge.run_finished()
         except Exception as exc:  # noqa: BLE001 - surfaced to the client as RUN_ERROR
             bridge.run_error(str(exc))
