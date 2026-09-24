@@ -45,6 +45,23 @@ def _resolver(handler, **settings_kwargs) -> PortalCatalogResolver:
     return PortalCatalogResolver(GeodataSettings(**settings_kwargs), http_client=http_client)
 
 
+class _RecordingClient:
+    """A minimal httpx.Client stand-in that just records it was used -
+    real TLS verification behavior (does verify=False actually let a
+    self-signed cert through?) is confirmed against a real self-signed
+    HTTPS server, not mocked here; this only tests which client
+    PortalCatalogResolver *picks*."""
+
+    def __init__(self, response: httpx.Response):
+        self.response = response
+        self.calls: list[str] = []
+
+    def get(self, url: str) -> httpx.Response:
+        self.calls.append(url)
+        self.response.request = httpx.Request("GET", url)
+        return self.response
+
+
 class TestGetAllowedLayerIds:
     def test_no_url_means_unscoped(self):
         resolver = _resolver(lambda request: httpx.Response(200, json=_SAMPLE_CONFIG_JSON))
@@ -206,3 +223,50 @@ class TestSsrfGuard:
         resolver = _resolver(handler, portal_catalog_max_response_bytes=1000)
 
         assert resolver.get_allowed_layer_ids("https://portal.example/config.json") is None
+
+
+class TestLoopbackUsesNonVerifyingClient:
+    """webpack-dev-server's devServer.https is hardcoded true in this
+    project - both `npm start` and `npm run start:ssl` serve over HTTPS
+    with a self-signed certificate, confirmed live: fetching such a URL
+    with a certificate-verifying client raises SSLCertVerificationError,
+    silently falling back to unscoped search with nothing surfaced to
+    the frontend. These tests only confirm PortalCatalogResolver picks
+    the right client per host - the actual "does verify=False let a
+    self-signed cert through" behavior is confirmed against a real
+    self-signed HTTPS server, not mockable here."""
+
+    def test_loopback_url_uses_the_loopback_client(self):
+        strict = _RecordingClient(httpx.Response(200, json=_SAMPLE_CONFIG_JSON))
+        loopback = _RecordingClient(httpx.Response(200, json=_SAMPLE_CONFIG_JSON))
+        resolver = PortalCatalogResolver(http_client=strict, loopback_http_client=loopback)
+
+        resolver.get_allowed_layer_ids("https://localhost:9001/config.json")
+
+        assert loopback.calls == ["https://localhost:9001/config.json"]
+        assert strict.calls == []
+
+    def test_non_loopback_url_uses_the_strict_client(self):
+        strict = _RecordingClient(httpx.Response(200, json=_SAMPLE_CONFIG_JSON))
+        loopback = _RecordingClient(httpx.Response(200, json=_SAMPLE_CONFIG_JSON))
+        resolver = PortalCatalogResolver(http_client=strict, loopback_http_client=loopback)
+
+        resolver.get_allowed_layer_ids("https://portal.example/config.json")
+
+        assert strict.calls == ["https://portal.example/config.json"]
+        assert loopback.calls == []
+
+    def test_loopback_disabled_never_calls_either_client(self):
+        strict = _RecordingClient(httpx.Response(200, json=_SAMPLE_CONFIG_JSON))
+        loopback = _RecordingClient(httpx.Response(200, json=_SAMPLE_CONFIG_JSON))
+        resolver = PortalCatalogResolver(
+            GeodataSettings(portal_catalog_allow_loopback=False),
+            http_client=strict,
+            loopback_http_client=loopback,
+        )
+
+        result = resolver.get_allowed_layer_ids("https://localhost:9001/config.json")
+
+        assert result is None
+        assert strict.calls == []
+        assert loopback.calls == []

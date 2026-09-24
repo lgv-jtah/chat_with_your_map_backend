@@ -74,6 +74,23 @@ actually exists - confirmed live: the frontend's own dev server
 locally reproduces exactly that. Set this to ``False`` once frontend
 and backend are deployed on genuinely separate hosts and loopback is
 no longer a legitimate target, alongside tightening CORS.
+
+**TLS verification is skipped for loopback fetches only.**
+``webpack-dev-server``'s ``devServer.https`` is hardcoded ``true`` in
+this project (both ``npm start`` and ``npm run start:ssl`` serve over
+HTTPS with a self-signed certificate) - confirmed live: fetching a
+self-signed-cert loopback URL with the default (verifying) client
+raises ``SSLCertVerificationError``, caught by the same broad
+``except`` as any other fetch failure and silently falling back to
+unscoped search, with nothing surfaced to the frontend at all. A
+second, separate httpx client with ``verify=False`` is used
+specifically when the target is loopback *and* loopback is allowed -
+an attacker who can already reach loopback services on this machine
+has bigger problems than a spoofed certificate there, so this doesn't
+open a new hole beyond what allowing loopback already accepted. A
+non-loopback host is always fetched with full certificate
+verification, regardless of this setting - this is not a blanket
+"skip TLS" switch.
 """
 
 import ipaddress
@@ -96,7 +113,11 @@ class _URLRejected(Exception):
 _LOOPBACK_HOSTNAMES = frozenset({"localhost"})
 
 
-def _check_url(url: str, allowed_hosts: frozenset[str], allow_loopback: bool) -> None:
+def _check_url(url: str, allowed_hosts: frozenset[str], allow_loopback: bool) -> bool:
+    """Raises _URLRejected if the URL isn't acceptable at all. Otherwise
+    returns whether the host is loopback, so the caller can pick the
+    (non-certificate-verifying) loopback client for the actual fetch."""
+
     parts = urlsplit(url)
 
     if parts.scheme not in ("http", "https"):
@@ -124,6 +145,8 @@ def _check_url(url: str, allowed_hosts: frozenset[str], allow_loopback: bool) ->
 
     if allowed_hosts and hostname not in allowed_hosts:
         raise _URLRejected(f"host not in allowlist: {hostname}")
+
+    return is_loopback
 
 
 def _flatten_layer_ids(elements: list[dict]) -> set[str]:
@@ -153,9 +176,22 @@ def _extract_layer_ids(config_json: dict) -> set[str]:
 class PortalCatalogResolver:
     """Resolves the set of layer ids a Masterportal instance exposes."""
 
-    def __init__(self, settings: GeodataSettings | None = None, http_client: httpx.Client | None = None):
+    def __init__(
+        self,
+        settings: GeodataSettings | None = None,
+        http_client: httpx.Client | None = None,
+        loopback_http_client: httpx.Client | None = None,
+    ):
         self.settings = settings or GeodataSettings()
         self._client = http_client or httpx.Client(timeout=self.settings.timeout)
+        # A separate, non-certificate-verifying client used only for
+        # loopback targets (see the module docstring's "TLS verification"
+        # section) - defaults to the same client as an explicitly-passed
+        # http_client (e.g. a test's MockTransport, where verify is moot)
+        # so existing single-client callers don't need to change.
+        self._loopback_client = loopback_http_client or http_client or httpx.Client(
+            timeout=self.settings.timeout, verify=False
+        )
         self._cache: dict[str, tuple[float, set[str]]] = {}
 
     def get_allowed_layer_ids(self, config_json_url: str | None) -> set[str] | None:
@@ -173,13 +209,14 @@ class PortalCatalogResolver:
             return cached[1]
 
         try:
-            _check_url(
+            is_loopback = _check_url(
                 config_json_url,
                 self.settings.portal_catalog_allowed_hosts,
                 self.settings.portal_catalog_allow_loopback,
             )
+            client = self._loopback_client if is_loopback else self._client
 
-            response = self._client.get(config_json_url)
+            response = client.get(config_json_url)
             response.raise_for_status()
 
             content_length = response.headers.get("content-length")
