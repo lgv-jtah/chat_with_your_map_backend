@@ -100,6 +100,12 @@ class ApplyFilterPayload(_CamelModel):
     FilterAgent's OGC API Features query (Section 9), pushed as an
     ad-hoc overlay."""
     label: str | None = None
+    total_matched: int | None = None
+    """numberMatched from the OGC API Features response, if the server
+    reported it (optional per spec)."""
+    truncated: bool = False
+    """True when total_matched is known and exceeds len(features) -
+    FilterAgent caps how many features it requests per query."""
 
 
 class OpenToolPayload(_CamelModel):

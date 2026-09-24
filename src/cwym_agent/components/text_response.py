@@ -64,7 +64,13 @@ class TextResponseComponent:
         if action:
             facts.append(f"Aktion: {action.action_type}")
         if filter_result:
-            facts.append(f"Gefilterte Ergebnisse: {filter_result.number_matched} Treffer")
+            # number_matched (OGC API Features' numberMatched) is optional
+            # per spec - fall back to the returned feature count when the
+            # server didn't report it, rather than printing "None Treffer".
+            count = filter_result.number_matched
+            if count is None:
+                count = len(filter_result.features.get("features", []))
+            facts.append(f"Gefilterte Ergebnisse: {count} Treffer")
 
         if facts:
             resolved = "; ".join(facts)

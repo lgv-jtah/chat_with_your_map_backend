@@ -85,6 +85,26 @@ class TestBuildFilterCommands:
         assert commands[0]["payload"]["layerId"] == "27714"
         assert commands[0]["payload"]["features"] == _FEATURES
         assert commands[0]["payload"]["label"] == "Wandsbek"
+        assert commands[0]["payload"]["totalMatched"] == 1
+        assert commands[0]["payload"]["truncated"] is False
+
+    def test_more_matched_than_shown_marks_truncated(self):
+        filter_result = FilterResult(layer_id="27714", features=_FEATURES, number_matched=500)
+        aggregated = _aggregated("Filter", layer=_LAYER, filter_result=filter_result)
+
+        commands = builder._build_commands(aggregated)
+
+        assert commands[0]["payload"]["totalMatched"] == 500
+        assert commands[0]["payload"]["truncated"] is True
+
+    def test_unknown_number_matched_is_not_truncated(self):
+        filter_result = FilterResult(layer_id="27714", features=_FEATURES, number_matched=None)
+        aggregated = _aggregated("Filter", layer=_LAYER, filter_result=filter_result)
+
+        commands = builder._build_commands(aggregated)
+
+        assert commands[0]["payload"]["totalMatched"] is None
+        assert commands[0]["payload"]["truncated"] is False
 
     def test_filter_result_produces_apply_filter_even_without_action_detector(self):
         """Qwen3's plan can call filter_agent without also calling

@@ -177,6 +177,31 @@ class TestFilterAgentFilter:
         assert captured["filter"] == "betten > 100"
         assert captured["filter-lang"] == "cql2-text"
 
+    def test_missing_number_matched_yields_none_not_returned_count(self):
+        """numberMatched is optional per the OGC API Features spec - when
+        the server omits it, number_matched must be None (unknown), not
+        silently default to len(features) (which would falsely claim
+        "matched exactly what was returned" when the true total is
+        actually unknown)."""
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            if "queryables" in str(request.url):
+                return httpx.Response(200, json=_QUERYABLES)
+            return httpx.Response(
+                200,
+                json={"type": "FeatureCollection", "features": [{"type": "Feature", "properties": {}}]},
+            )
+
+        client = httpx.Client(transport=httpx.MockTransport(handler))
+        reply = json.dumps([{"field": "betten", "operator": "gt", "value": 1}])
+        agent = FilterAgent(llm=_mock_llm(reply), http_client=client)
+
+        result = agent.filter("query", _OAF_LAYER)
+
+        assert result is not None
+        assert result.number_matched is None
+        assert len(result.features["features"]) == 1
+
     def test_spatial_predicate_added_when_location_has_boundary(self):
         captured = {}
 

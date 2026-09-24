@@ -156,6 +156,10 @@ class CommandBuilderComponent:
         if filter_result is None:
             return []
 
+        total_matched = filter_result.number_matched
+        shown = len(filter_result.features.get("features", []))
+        truncated = total_matched is not None and total_matched > shown
+
         return [
             ApplyFilterCommand(
                 command_id=str(uuid.uuid4()),
@@ -163,6 +167,8 @@ class CommandBuilderComponent:
                     layer_id=filter_result.layer_id,
                     features=filter_result.features,
                     label=filter_result.label,
+                    total_matched=total_matched,
+                    truncated=truncated,
                 ),
             ).model_dump(by_alias=True)
         ]

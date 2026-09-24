@@ -230,7 +230,7 @@ class FilterAgent:
         return FilterResult(
             layer_id=layer.layer_id,
             features={"type": "FeatureCollection", "features": features},
-            number_matched=data.get("numberMatched", len(features)),
+            number_matched=data.get("numberMatched"),
             label=location.name if location else None,
         )
 

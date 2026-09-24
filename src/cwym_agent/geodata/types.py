@@ -67,5 +67,8 @@ class FilterResult:
     layer_id: str
     features: dict
     """A GeoJSON FeatureCollection."""
-    number_matched: int
+    number_matched: int | None
+    """OGC API Features' numberMatched, if the server reported it - it's
+    optional per spec, so None here means "unknown", distinct from
+    "matched exactly what was returned"."""
     label: str | None = None
