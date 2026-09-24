@@ -44,11 +44,28 @@ logger = logging.getLogger(__name__)
 
 # Hamburg's own address index (api.hamburg.de/addr_search) is scoped to
 # streets/districts/boroughs *within* Hamburg - it has no single record
-# for "Hamburg" the city itself. Whenever no more specific location is
-# resolved (unmatched query, or the query genuinely is just "Hamburg"),
-# fall back to the city's well-known center, matching what
-# StubDataServices did for its equivalent default case.
-_DEFAULT_LOCATION = LocationMatch("Hamburg", 53.5511, 9.9937, 0.9)
+# for "Hamburg" the city itself (confirmed live: searching "Hamburg" or
+# "Freie und Hansestadt Hamburg" returns only its individual boroughs,
+# e.g. "Hamburg-Mitte", "Hamburg-Nord", never a city-wide hit). Whenever
+# no more specific location is resolved (unmatched query, or the query
+# genuinely is just "Hamburg"), fall back to the city's well-known
+# center, matching what StubDataServices did for its equivalent default
+# case.
+#
+# _HAMBURG_EXTENT is chat_with_your_map_portal/config.json's own
+# portalConfig.map.mapView.extent - [510000.0, 5850000.0, 625000.4,
+# 6000000.0] in EPSG:25832 - converted to WGS84 via pyproj
+# (Transformer.from_crs("EPSG:25832", "EPSG:4326", always_xy=True)),
+# not a from-scratch guess: reuses the portal author's own already-
+# vetted "sensible whole-region view", not a data-derived union of
+# Hamburg's boroughs (which would technically be more "correct" but
+# includes far-flung exclaves like Neuwerk, an island in the North Sea
+# that's administratively part of Hamburg-Mitte - zooming out that far
+# would make the actual urban area look tiny, the opposite of what a
+# "show me Hamburg" default should look like).
+_HAMBURG_EXTENT = (9.148322816744086, 52.79970456940332, 10.913170524761878, 54.13290152266379)
+
+_DEFAULT_LOCATION = LocationMatch("Hamburg", 53.5511, 9.9937, 0.9, extent=_HAMBURG_EXTENT)
 
 _ACTION_KEYWORDS: list[tuple[tuple[str, ...], str]] = [
     (("navigiere", "navigate", "fahre nach"), "Navigieren"),

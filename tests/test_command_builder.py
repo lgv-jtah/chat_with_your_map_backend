@@ -8,11 +8,21 @@ _WANDSBEK_BOUNDARY = {
     "coordinates": [[[10.0, 53.5], [10.1, 53.5], [10.1, 53.6], [10.0, 53.6], [10.0, 53.5]]],
 }
 
+_WANDSBEK_EXTENT = (10.0, 53.5, 10.1, 53.6)
+
 _DISTRICT_LOCATION = LocationMatch(
-    name="Wandsbek", latitude=53.5760029, longitude=10.0755348, confidence=0.95, boundary=_WANDSBEK_BOUNDARY
+    name="Wandsbek",
+    latitude=53.5760029,
+    longitude=10.0755348,
+    confidence=0.95,
+    boundary=_WANDSBEK_BOUNDARY,
+    extent=_WANDSBEK_EXTENT,
 )
 _STREET_LOCATION = LocationMatch(
     name="Mönckebergstraße", latitude=53.55, longitude=10.0, confidence=0.9, boundary=None
+)
+_HAMBURG_WIDE_LOCATION = LocationMatch(
+    name="Hamburg", latitude=53.5511, longitude=9.9937, confidence=0.9, extent=(9.1, 52.8, 10.9, 54.1)
 )
 _LAYER = LayerMatch(name="StadtRAD-Stationen Hamburg", layer_id="27764", confidence=0.92)
 _FEATURES = {"type": "FeatureCollection", "features": [{"type": "Feature", "properties": {}}]}
@@ -34,7 +44,7 @@ builder = CommandBuilderComponent()
 
 
 class TestBuildCommands:
-    def test_layer_and_district_location_builds_three_commands_in_order(self):
+    def test_layer_and_district_location_builds_four_commands_in_order(self):
         aggregated = _aggregated("Zeigen", layer=_LAYER, locations=[_DISTRICT_LOCATION])
 
         commands = builder._build_commands(aggregated)
@@ -43,11 +53,13 @@ class TestBuildCommands:
             "ACTIVATE_LAYER",
             "DRAW_BOUNDARY",
             "NAVIGATE_TO_LOCATION",
+            "ZOOM_TO_EXTENT",
         ]
         assert commands[0]["payload"]["layerIds"] == ["27764"]
         assert commands[1]["payload"]["geometry"] == _WANDSBEK_BOUNDARY
         assert commands[1]["payload"]["label"] == "Wandsbek"
         assert commands[2]["payload"]["locations"][0]["name"] == "Wandsbek"
+        assert tuple(commands[3]["payload"]["bbox"]) == _WANDSBEK_EXTENT
 
     def test_layer_and_street_location_builds_only_activate_and_navigate(self):
         aggregated = _aggregated("Zeigen", layer=_LAYER, locations=[_STREET_LOCATION])
@@ -56,12 +68,32 @@ class TestBuildCommands:
 
         assert [cmd["type"] for cmd in commands] == ["ACTIVATE_LAYER", "NAVIGATE_TO_LOCATION"]
 
-    def test_district_location_without_layer_builds_boundary_and_navigate(self):
+    def test_district_location_without_layer_builds_boundary_navigate_and_extent(self):
         aggregated = _aggregated("Zeigen", layer=None, locations=[_DISTRICT_LOCATION])
 
         commands = builder._build_commands(aggregated)
 
-        assert [cmd["type"] for cmd in commands] == ["DRAW_BOUNDARY", "NAVIGATE_TO_LOCATION"]
+        assert [cmd["type"] for cmd in commands] == ["DRAW_BOUNDARY", "NAVIGATE_TO_LOCATION", "ZOOM_TO_EXTENT"]
+
+    def test_location_with_extent_but_no_boundary_still_zooms_to_extent(self):
+        """The Hamburg-wide fallback (RealDataServices' _DEFAULT_LOCATION)
+        has no real boundary geometry to draw, but does have a hardcoded
+        extent - DRAW_BOUNDARY must not fire, ZOOM_TO_EXTENT still
+        should."""
+
+        aggregated = _aggregated("Zeigen", layer=None, locations=[_HAMBURG_WIDE_LOCATION])
+
+        commands = builder._build_commands(aggregated)
+
+        assert [cmd["type"] for cmd in commands] == ["NAVIGATE_TO_LOCATION", "ZOOM_TO_EXTENT"]
+        assert tuple(commands[1]["payload"]["bbox"]) == (9.1, 52.8, 10.9, 54.1)
+
+    def test_location_without_extent_or_boundary_builds_no_extras(self):
+        aggregated = _aggregated("Zeigen", layer=None, locations=[_STREET_LOCATION])
+
+        commands = builder._build_commands(aggregated)
+
+        assert [cmd["type"] for cmd in commands] == ["NAVIGATE_TO_LOCATION"]
 
     def test_oeffne_action_path_unaffected_by_boundary_logic(self):
         aggregated = _aggregated("Öffne", layer=_LAYER, locations=[_DISTRICT_LOCATION], query="Kontaktformular öffnen")

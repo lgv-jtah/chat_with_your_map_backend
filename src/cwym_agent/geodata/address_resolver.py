@@ -135,13 +135,15 @@ class AddressResolver:
 
         score = hit.get("_score") or 0.0
         confidence = min(score / _SCORE_NORMALIZATION_CEILING, 1.0)
+        boundary = AddressResolver._extract_boundary(properties)
 
         return LocationMatch(
             name=name,
             latitude=latitude,
             longitude=longitude,
             confidence=confidence,
-            boundary=AddressResolver._extract_boundary(properties),
+            boundary=boundary,
+            extent=AddressResolver._bbox_of(boundary) if boundary else None,
         )
 
     @staticmethod
@@ -160,3 +162,19 @@ class AddressResolver:
             return None
 
         return {"type": extent["type"], "coordinates": extent.get("coordinates")}
+
+    @staticmethod
+    def _bbox_of(boundary: dict) -> tuple[float, float, float, float]:
+        """WGS84 (minLon, minLat, maxLon, maxLat) covering a GeoJSON
+        Polygon/MultiPolygon - for ZOOM_TO_EXTENT, alongside `boundary`
+        itself (which DRAW_BOUNDARY outlines directly)."""
+
+        def points(coords):
+            if isinstance(coords[0], (int, float)):
+                yield coords
+                return
+            for item in coords:
+                yield from points(item)
+
+        lons, lats = zip(*points(boundary["coordinates"]))
+        return min(lons), min(lats), max(lons), max(lats)

@@ -7,12 +7,23 @@ single combined payload.
 
 When a resolved location carries a district-level area boundary, the
 build order for a "Zeigen"/"Navigieren" turn is ``ACTIVATE_LAYER ->
-DRAW_BOUNDARY -> NAVIGATE_TO_LOCATION`` - draws the district for visual
-context, but (unlike an earlier version of this component) does not
-spatially restrict the activated layer's own features; that's now
-``FilterAgent``'s job for a "Filter" turn, via real server-side OGC API
-Features CQL2 queries rather than client-side masking (see
-``cwym-agent-architecture.md`` Section 9).
+DRAW_BOUNDARY -> NAVIGATE_TO_LOCATION -> ZOOM_TO_EXTENT`` - draws the
+district for visual context, but (unlike an earlier version of this
+component) does not spatially restrict the activated layer's own
+features; that's now ``FilterAgent``'s job for a "Filter" turn, via
+real server-side OGC API Features CQL2 queries rather than client-side
+masking (see ``cwym-agent-architecture.md`` Section 9).
+
+``ZOOM_TO_EXTENT`` comes *after* ``NAVIGATE_TO_LOCATION`` deliberately:
+the frontend executes each command as it arrives with no batching
+(Section 3), and ``NAVIGATE_TO_LOCATION``'s own client-side zoom
+default is tuned for a single point/address, not an area the size of a
+district or a whole city - found live: navigating to "Hamburg" with no
+explicit zoom left the map zoomed in on the city center, needing a
+manual zoom-out to see the city. ``ZOOM_TO_EXTENT`` fits the view to
+``LocationMatch.extent`` right after, overriding that default with a
+properly city/district-scaled view, while ``NAVIGATE_TO_LOCATION``
+still does its own job (placing the marker).
 """
 
 import uuid
@@ -33,6 +44,8 @@ from cwym_agent.map_commands import (
     NavigateToLocationPayload,
     OpenToolCommand,
     OpenToolPayload,
+    ZoomToExtentCommand,
+    ZoomToExtentPayload,
 )
 
 # Action labels that map straight to ACTIVATE_LAYER/NAVIGATE_TO_LOCATION
@@ -140,6 +153,15 @@ class CommandBuilderComponent:
                             for loc in locations
                         ]
                     ),
+                ).model_dump(by_alias=True)
+            )
+
+        extent_location = next((loc for loc in locations if loc.extent), None)
+        if extent_location:
+            commands.append(
+                ZoomToExtentCommand(
+                    command_id=str(uuid.uuid4()),
+                    payload=ZoomToExtentPayload(bbox=extent_location.extent),
                 ).model_dump(by_alias=True)
             )
 

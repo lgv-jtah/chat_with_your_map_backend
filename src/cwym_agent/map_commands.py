@@ -6,17 +6,25 @@ Each command is a discriminated union member keyed on ``type``, with a
 constructs these; the Masterportal frontend executes each one on receipt
 of the matching AG-UI ``TOOL_CALL_RESULT`` event.
 
-``ACTIVATE_LAYER``, ``NAVIGATE_TO_LOCATION``, ``DRAW_BOUNDARY``,
-``APPLY_FILTER`` (see Section 9) and ``OPEN_TOOL`` are actually built by
-``CommandBuilderComponent`` today - the other four types are modeled
-here for closed-enum completeness (so the frontend dispatcher has a
-real schema to switch on) but nothing in the pipeline constructs them
-yet: ``DEACTIVATE_LAYER``/``ZOOM_TO_EXTENT`` need resolver data that
-doesn't exist yet (a "deactivate" action label, extent geometry), and
+``ACTIVATE_LAYER``, ``NAVIGATE_TO_LOCATION``, ``ZOOM_TO_EXTENT``,
+``DRAW_BOUNDARY``, ``APPLY_FILTER`` (see Section 9) and ``OPEN_TOOL``
+are actually built by ``CommandBuilderComponent`` today - the other
+three types are modeled here for closed-enum completeness (so the
+frontend dispatcher has a real schema to switch on) but nothing in the
+pipeline constructs them yet: ``DEACTIVATE_LAYER`` needs resolver data
+that doesn't exist yet (a "deactivate" action label), and
 ``SET_LANGUAGE``/``HIGHLIGHT_FEATURE``/``CLEAR_HIGHLIGHTS`` need intent
 detection that's explicitly out of scope for this change (language-
 switch detection, an explicit "clear the map" intent). This is
 deliberate, not an oversight.
+
+``ZOOM_TO_EXTENT`` fires alongside ``NAVIGATE_TO_LOCATION`` whenever a
+resolved location has a sensible area to fit the view to
+(``LocationMatch.extent`` - derived from a real address-search
+boundary, or a hardcoded region extent for a location with none, like
+the Hamburg-wide fallback) - found live: without it, navigating to
+"Hamburg" left the map zoomed in on the city center at a zoom level
+tuned for a single address, not a whole city.
 
 ``APPLY_FILTER``'s payload carries the actual matched GeoJSON features
 from ``FilterAgent``'s OGC API Features query as an ad-hoc overlay -

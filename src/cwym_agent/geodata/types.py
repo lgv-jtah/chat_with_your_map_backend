@@ -19,6 +19,13 @@ class LocationMatch:
     """GeoJSON Polygon/MultiPolygon (WGS84), or None when the resolved hit
     has no area geometry (street/address-level matches, or the source
     endpoint's area field was itself a Point rather than a polygon)."""
+    extent: tuple[float, float, float, float] | None = None
+    """WGS84 bounding box (minLon, minLat, maxLon, maxLat) to fit the map
+    view to (ZOOM_TO_EXTENT), distinct from `boundary` (which drives
+    DRAW_BOUNDARY's outline) - set whenever there's a sensible area to
+    zoom to: derived from `boundary` when one exists, or a hardcoded
+    region extent for a location (like the Hamburg-wide fallback) that
+    has no real boundary geometry to derive one from."""
 
 
 @dataclass

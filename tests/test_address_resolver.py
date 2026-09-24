@@ -107,6 +107,35 @@ class TestResolve:
         assert result is not None
         assert result.boundary == {"type": "Polygon", "coordinates": polygon["coordinates"]}
 
+    def test_district_hit_with_polygon_extent_also_populates_bbox_extent(self):
+        polygon = {
+            "type": "Polygon",
+            "coordinates": [[[10.0, 53.5], [10.1, 53.5], [10.1, 53.6], [10.0, 53.6], [10.0, 53.5]]],
+        }
+        hits = [_hit("Wandsbek", 10.11, 53.64, "District", 58.3, geographicextent=polygon)]
+        resolver = _client_for(hits)
+
+        result = resolver.resolve("Wandsbek")
+
+        assert result is not None
+        assert result.extent == (10.0, 53.5, 10.1, 53.6)
+
+    def test_multipolygon_extent_bbox_covers_all_parts(self):
+        multipolygon = {
+            "type": "MultiPolygon",
+            "coordinates": [
+                [[[10.0, 53.5], [10.1, 53.5], [10.1, 53.6], [10.0, 53.6], [10.0, 53.5]]],
+                [[[11.0, 54.0], [11.2, 54.0], [11.2, 54.2], [11.0, 54.2], [11.0, 54.0]]],
+            ],
+        }
+        hits = [_hit("Multi", 10.5, 53.8, "District", 58.3, geographicextent=multipolygon)]
+        resolver = _client_for(hits)
+
+        result = resolver.resolve("Multi")
+
+        assert result is not None
+        assert result.extent == (10.0, 53.5, 11.2, 54.2)
+
     def test_street_hit_with_point_extent_leaves_boundary_none(self):
         point_extent = {"type": "Point", "coordinates": [10.0, 53.55]}
         hits = [_hit("Mönckebergstraße", 10.0, 53.55, "Street", 50.0, geographicextent=point_extent)]
@@ -125,6 +154,7 @@ class TestResolve:
 
         assert result is not None
         assert result.boundary is None
+        assert result.extent is None
 
     def test_http_error_returns_none(self):
         def handler(request: httpx.Request) -> httpx.Response:
