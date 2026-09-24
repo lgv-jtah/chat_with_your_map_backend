@@ -255,15 +255,28 @@ class RealDataServices:
         return candidates[index - 1]
 
     def apply_filter(
-        self, query: str, layer: LayerMatch | None, location: LocationMatch | None = None
+        self,
+        query: str,
+        layer: LayerMatch | None,
+        location: LocationMatch | None = None,
+        mode: str = "replace",
+        prior_conditions: list | None = None,
     ) -> FilterResult | None:
-        """:param layer: the already-resolved layer to filter (from this
-        turn's layer_resolver call, if any).
-        :param location: the already-resolved location (from this turn's
-        location_extractor call, if any) - its boundary, when present,
-        becomes a spatial predicate (see FilterAgent)."""
+        """:param layer: the layer to filter - from this turn's
+        layer_resolver call, or (a conversation-context follow-up
+        naming an already-active layer) looked up in the portal's
+        LayerCatalog instead.
+        :param location: the already-resolved location (from this
+        turn's location_extractor call, or re-resolved from the map
+        state's lastLocation) - its boundary, when present, becomes a
+        spatial predicate (see FilterAgent).
+        :param mode: "refine" merges with prior_conditions (Section
+        10.6); "replace" (default) starts from a clean slate.
+        :param prior_conditions: the target layer's previously-applied
+        conditions, from the map state's filters - only consulted when
+        mode="refine"."""
 
-        return self.filter_agent.filter(query, layer, location)
+        return self.filter_agent.filter(query, layer, location, mode=mode, prior_conditions=prior_conditions)
 
     def detect_action(self, query: str) -> ActionMatch:
         lowered = query.lower()

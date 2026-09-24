@@ -1,26 +1,32 @@
 """FastAPI application exposing the CWYM-Agent pipeline over AG-UI/SSE.
 
-The endpoint path and request body intentionally match what the
-``chatWithYourMap`` Masterportal addon frontend already sends (see
-``ChatWithYourMap.vue``), so the frontend only needs to switch from
-one-shot JSON parsing to consuming an SSE stream of AG-UI events -
-no request-shape changes required.
+The endpoint accepts a standard AG-UI ``RunAgentInput`` body
+(cmym-agent-architecture.md Section 10): a per-chat-session
+``threadId``, the last few chat turns, the live map state, and the
+resolved portal config/services URLs in
+``forwardedProps.portal_context``. Replaces an earlier custom
+``QueryRequest`` body that carried only the current message text and a
+fresh ``threadId`` per request - with no conversation memory at all, a
+follow-up like "zeig mir nur die Gymnasien" after "wo finde ich alle
+Schulen" was planned in total isolation (see ImplementationLog.md).
 """
 
 import asyncio
 import logging
 import time
-import uuid
 from contextlib import asynccontextmanager
 from functools import lru_cache
 
-from fastapi import Depends, FastAPI
+from ag_ui.core import RunAgentInput
+from ag_ui.encoder import EventEncoder
+from fastapi import Depends, FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
 from haystack import Pipeline
-from pydantic import BaseModel
+from pydantic import BaseModel, ValidationError
 
 from cwym_agent.bridge import AGUIEventBridge
+from cwym_agent.geodata.conversation_context import build_context, current_query
 from cwym_agent.geodata.portal_catalog_resolver import PortalCatalogResolver
 from cwym_agent.pipeline import build_pipeline, run_pipeline
 
@@ -94,42 +100,56 @@ app.add_middleware(
 
 class PortalContext(BaseModel):
     """Matches what the frontend already resolved to boot itself
-    (cwym-agent-architecture.md Section 8) - the backend never re-derives
-    portal URLs on its own. ``services_json_url`` is accepted for schema
-    parity with the doc but currently unused; see
-    ``PortalCatalogResolver``'s module docstring for why."""
+    (cmym-agent-architecture.md Section 8) - the backend never
+    re-derives portal URLs on its own. Both URLs are required now
+    (unlike the earlier config.json-only design): PortalCatalogResolver
+    cross-references services.json for per-layer metadata FilterAgent
+    needs to target an already-active layer (Section 10)."""
 
     config_json_url: str
-    services_json_url: str | None = None
-
-
-class QueryRequest(BaseModel):
-    query: str
-    include_reasoning: bool = False
-    language: str = "German"
-    portal_context: PortalContext | None = None
+    services_json_url: str
+    languages: list[str] = ["de"]
 
 
 @app.post("/api/query")
 async def query_endpoint(
-    request: QueryRequest,
+    inp: RunAgentInput,
     pipeline: Pipeline = Depends(get_pipeline),
     portal_catalog_resolver: PortalCatalogResolver = Depends(get_portal_catalog_resolver),
 ):
-    thread_id = str(uuid.uuid4())
-    run_id = str(uuid.uuid4())
-    bridge = AGUIEventBridge(thread_id=thread_id, run_id=run_id)
+    try:
+        query = current_query(inp)
+        raw_portal_context = (inp.forwarded_props or {}).get("portal_context")
+        portal_context = PortalContext.model_validate(raw_portal_context) if raw_portal_context else None
+    except (ValidationError, ValueError) as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
 
-    config_json_url = request.portal_context.config_json_url if request.portal_context else None
-    allowed_layer_ids = await asyncio.to_thread(
-        portal_catalog_resolver.get_allowed_layer_ids, config_json_url
-    )
-    allowed_layer_ids = list(allowed_layer_ids) if allowed_layer_ids is not None else None
+    catalog = None
+    if portal_context is not None:
+        catalog = await portal_catalog_resolver.get_or_build(
+            portal_context.config_json_url, portal_context.services_json_url
+        )
+    allowed_layer_ids = list(catalog.names()) if catalog is not None else None
+
+    try:
+        context = build_context(inp, catalog)
+    except ValidationError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    bridge = AGUIEventBridge(thread_id=inp.thread_id, run_id=inp.run_id)
+    encoder = EventEncoder()
 
     def run_pipeline_sync():
         bridge.run_started()
         try:
-            run_pipeline(pipeline, request.query, bridge=bridge, allowed_layer_ids=allowed_layer_ids)
+            run_pipeline(
+                pipeline,
+                query,
+                bridge=bridge,
+                allowed_layer_ids=allowed_layer_ids,
+                context=context,
+                layer_catalog=catalog,
+            )
             bridge.run_finished()
         except Exception as exc:  # noqa: BLE001 - surfaced to the client as RUN_ERROR
             bridge.run_error(str(exc))
@@ -144,11 +164,11 @@ async def query_endpoint(
             event = await loop.run_in_executor(None, bridge.drain)
             if event is None:
                 break
-            yield f"data: {event.model_dump_json(by_alias=True, exclude_none=True)}\n\n"
+            yield encoder.encode(event)
 
         await task
 
-    return StreamingResponse(event_stream(), media_type="text/event-stream")
+    return StreamingResponse(event_stream(), media_type=encoder.get_content_type())
 
 
 @app.get("/health")

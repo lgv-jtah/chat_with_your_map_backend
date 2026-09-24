@@ -31,14 +31,20 @@ import uuid
 from haystack import component
 
 from cwym_agent.bridge import AGUIEventBridge
+from cwym_agent.geodata.conversation_context import ConversationContext
 from cwym_agent.map_commands import (
     ActivateLayerCommand,
     ActivateLayerPayload,
     ApplyFilterCommand,
     ApplyFilterPayload,
     Coordinates,
+    DeactivateLayerCommand,
+    DeactivateLayerPayload,
     DrawBoundaryCommand,
     DrawBoundaryPayload,
+    FilterAreaPayload,
+    FilterConditionPayload,
+    FilterSpecPayload,
     NamedLocation,
     NavigateToLocationCommand,
     NavigateToLocationPayload,
@@ -76,8 +82,13 @@ def _detect_tool_name(query: str) -> str | None:
 @component
 class CommandBuilderComponent:
     @component.output_types(commands=list)
-    def run(self, aggregated: dict, bridge: AGUIEventBridge | None = None):
-        commands = self._build_commands(aggregated)
+    def run(
+        self,
+        aggregated: dict,
+        context: ConversationContext | None = None,
+        bridge: AGUIEventBridge | None = None,
+    ):
+        commands = self._build_commands(aggregated, context)
 
         if bridge:
             for cmd in commands:
@@ -85,7 +96,7 @@ class CommandBuilderComponent:
 
         return {"commands": commands}
 
-    def _build_commands(self, aggregated: dict) -> list[dict]:
+    def _build_commands(self, aggregated: dict, context: ConversationContext | None = None) -> list[dict]:
         # Checked before the action_detector-gated branches below,
         # unconditionally: Qwen3's plan can legitimately call filter_agent
         # without also calling action_detector (the intent is already
@@ -95,7 +106,7 @@ class CommandBuilderComponent:
         # filter_result is on its own strong enough evidence of filter
         # intent; it shouldn't depend on action_detector also having run.
         if aggregated.get("filter_result") is not None:
-            return self._build_filter_commands(aggregated)
+            return self._build_filter_commands(aggregated, context)
 
         action = aggregated.get("action")
         if action is None:
@@ -167,12 +178,20 @@ class CommandBuilderComponent:
 
         return commands
 
-    def _build_filter_commands(self, aggregated: dict) -> list[dict]:
+    def _build_filter_commands(
+        self, aggregated: dict, context: ConversationContext | None = None
+    ) -> list[dict]:
         """A "Filter" turn stands alone: shows only FilterAgent's matched
         features as an overlay, not the full unfiltered layer (unlike a
         "Zeigen"/"Navigieren" turn's ACTIVATE_LAYER) - activating the
         whole layer alongside a filtered subset would just show every
-        feature twice, once highlighted and once not."""
+        feature twice, once highlighted and once not.
+
+        On a follow-up, the target layer is usually already active from
+        the previous turn (cmym-agent-architecture.md Section 10.7) - in
+        that case DEACTIVATE_LAYER for it is emitted first, from this
+        same call, so the frontend never briefly shows both the full
+        layer and the filtered overlay together."""
 
         filter_result = aggregated.get("filter_result")
         if filter_result is None:
@@ -182,7 +201,33 @@ class CommandBuilderComponent:
         shown = len(filter_result.features.get("features", []))
         truncated = total_matched is not None and total_matched > shown
 
-        return [
+        commands: list[dict] = []
+
+        active_layer_ids = context.map_state.active_layer_ids if context else []
+        if filter_result.layer_id in active_layer_ids:
+            commands.append(
+                DeactivateLayerCommand(
+                    command_id=str(uuid.uuid4()),
+                    payload=DeactivateLayerPayload(layer_ids=[filter_result.layer_id]),
+                ).model_dump(by_alias=True)
+            )
+
+        filter_spec = None
+        if filter_result.conditions or filter_result.area_kind:
+            area = (
+                FilterAreaPayload(name=filter_result.label, kind=filter_result.area_kind)
+                if filter_result.label and filter_result.area_kind
+                else None
+            )
+            filter_spec = FilterSpecPayload(
+                conditions=[
+                    FilterConditionPayload(field=c.field, operator=c.operator, value=c.value)
+                    for c in filter_result.conditions
+                ],
+                area=area,
+            )
+
+        commands.append(
             ApplyFilterCommand(
                 command_id=str(uuid.uuid4()),
                 payload=ApplyFilterPayload(
@@ -191,6 +236,8 @@ class CommandBuilderComponent:
                     label=filter_result.label,
                     total_matched=total_matched,
                     truncated=truncated,
+                    filter_spec=filter_spec,
                 ),
             ).model_dump(by_alias=True)
-        ]
+        )
+        return commands

@@ -5,6 +5,10 @@ dependency override), not the real Qwen3/vLLM backend, so this stays
 fast and deterministic regardless of network access. Real-backend
 behavior is covered separately in ``test_qwen3_client.py`` (mocked) and
 ``test_qwen3_live.py`` (opt-in, real server).
+
+Requests are built as ``RunAgentInput`` bodies (cmym-agent-architecture.md
+Section 10) - the wire format the real frontend sends since the
+conversation-memory work landed.
 """
 
 import json
@@ -12,22 +16,27 @@ import json
 from fastapi.testclient import TestClient
 
 from cwym_agent.api.main import app, get_pipeline, get_portal_catalog_resolver
+from cwym_agent.geodata.portal_catalog_resolver import LayerCatalog
+from cwym_agent.geodata.types import LayerMatch
 from cwym_agent.pipeline import build_pipeline
 from cwym_agent.stubs.data_services import StubDataServices
 from cwym_agent.stubs.qwen3 import StubQwen3Generator
 
+
 class FakePortalCatalogResolver:
-    """Records the URL it's asked to resolve; returns a fixed id set for
-    any non-None URL, so API-level tests don't need real network access
-    (unit coverage for the resolver itself lives in
+    """Records the URL pair it's asked to resolve; returns a fixed
+    catalog for any non-None pair, so API-level tests don't need real
+    network access (unit coverage for the resolver itself lives in
     test_portal_catalog_resolver.py)."""
 
     def __init__(self):
         self.calls: list = []
 
-    def get_allowed_layer_ids(self, config_json_url):
-        self.calls.append(config_json_url)
-        return {"27764"} if config_json_url else None
+    async def get_or_build(self, config_json_url, services_json_url):
+        self.calls.append((config_json_url, services_json_url))
+        if not config_json_url:
+            return None
+        return LayerCatalog({"27764": LayerMatch("StadtRAD-Stationen Hamburg", "27764", 1.0)})
 
 
 app.dependency_overrides[get_pipeline] = lambda: build_pipeline(
@@ -38,6 +47,21 @@ fake_portal_catalog_resolver = FakePortalCatalogResolver()
 app.dependency_overrides[get_portal_catalog_resolver] = lambda: fake_portal_catalog_resolver
 
 client = TestClient(app)
+
+
+def _run_input(query: str, *, state=None, portal_context=None, thread_id="thread-1") -> dict:
+    """Builds a RunAgentInput body the same shape buildRunInput.js sends
+    (Section 10.8)."""
+
+    return {
+        "threadId": thread_id,
+        "runId": "run-1",
+        "messages": [{"id": "m1", "role": "user", "content": query}],
+        "state": state,
+        "tools": [],
+        "context": [],
+        "forwardedProps": {"portal_context": portal_context} if portal_context else {},
+    }
 
 
 def _parse_sse_events(text: str) -> list[dict]:
@@ -74,13 +98,7 @@ def test_health_endpoint():
 
 def test_query_endpoint_streams_expected_agui_event_sequence():
     with client.stream(
-        "POST",
-        "/api/query",
-        json={
-            "query": "Zeige mir Fahrradstationen in Wandsbek",
-            "include_reasoning": True,
-            "language": "German",
-        },
+        "POST", "/api/query", json=_run_input("Zeige mir Fahrradstationen in Wandsbek")
     ) as response:
         assert response.status_code == 200
         assert response.headers["content-type"].startswith("text/event-stream")
@@ -160,9 +178,7 @@ def test_query_endpoint_streams_expected_agui_event_sequence():
 
 def test_query_endpoint_default_query_still_resolves_hamburg():
     with client.stream(
-        "POST",
-        "/api/query",
-        json={"query": "Sag mir etwas über die Stadt"},
+        "POST", "/api/query", json=_run_input("Sag mir etwas über die Stadt")
     ) as response:
         body = "".join(response.iter_text())
 
@@ -182,9 +198,7 @@ def test_query_endpoint_unactionable_action_produces_zero_commands():
     still finishes normally with a text reply, just no map commands."""
 
     with client.stream(
-        "POST",
-        "/api/query",
-        json={"query": "Filtere Krankenhäuser in Altona"},
+        "POST", "/api/query", json=_run_input("Filtere Krankenhäuser in Altona")
     ) as response:
         assert response.status_code == 200
         body = "".join(response.iter_text())
@@ -204,9 +218,7 @@ def test_query_endpoint_unactionable_action_produces_zero_commands():
 
 def test_query_endpoint_open_contact_form_emits_open_tool_command():
     with client.stream(
-        "POST",
-        "/api/query",
-        json={"query": "Kannst du mir das Kontaktformular öffnen"},
+        "POST", "/api/query", json=_run_input("Kannst du mir das Kontaktformular öffnen")
     ) as response:
         assert response.status_code == 200
         body = "".join(response.iter_text())
@@ -224,35 +236,82 @@ def test_query_endpoint_open_contact_form_emits_open_tool_command():
 
 
 def test_query_endpoint_forwards_portal_context_to_catalog_resolver():
-    """Section 8: a request carrying portal_context should have its
-    config_json_url resolved via PortalCatalogResolver before the
-    pipeline runs, so layer_resolver can be scoped to that portal."""
+    """Section 8: a request carrying portal_context should have both
+    URLs resolved via PortalCatalogResolver before the pipeline runs, so
+    layer_resolver can be scoped to that portal."""
 
     fake_portal_catalog_resolver.calls.clear()
 
     with client.stream(
         "POST",
         "/api/query",
-        json={
-            "query": "Zeige mir Fahrradstationen in Wandsbek",
-            "portal_context": {"config_json_url": "https://portal.example/config.json"},
-        },
+        json=_run_input(
+            "Zeige mir Fahrradstationen in Wandsbek",
+            portal_context={
+                "config_json_url": "https://portal.example/config.json",
+                "services_json_url": "https://portal.example/services.json",
+            },
+        ),
     ) as response:
         assert response.status_code == 200
         body = "".join(response.iter_text())
 
     events = _parse_sse_events(body)
     assert "RUN_ERROR" not in [event["type"] for event in events]
-    assert fake_portal_catalog_resolver.calls == ["https://portal.example/config.json"]
+    assert fake_portal_catalog_resolver.calls == [
+        ("https://portal.example/config.json", "https://portal.example/services.json")
+    ]
 
 
 def test_query_endpoint_without_portal_context_stays_unscoped():
     fake_portal_catalog_resolver.calls.clear()
 
     with client.stream(
-        "POST", "/api/query", json={"query": "Zeige mir Fahrradstationen in Wandsbek"}
+        "POST", "/api/query", json=_run_input("Zeige mir Fahrradstationen in Wandsbek")
     ) as response:
         assert response.status_code == 200
         "".join(response.iter_text())
 
-    assert fake_portal_catalog_resolver.calls == [None]
+    assert fake_portal_catalog_resolver.calls == []
+
+
+def test_query_endpoint_active_layer_state_reaches_the_planner():
+    """Section 10: the live map state a request carries must actually
+    influence planning - a coarse end-to-end check that build_context +
+    the planner context block are wired all the way through, without
+    depending on a specific plan (that's covered at the unit level in
+    test_conversation_context.py/test_master_agent.py)."""
+
+    with client.stream(
+        "POST",
+        "/api/query",
+        json=_run_input(
+            "Nur die Gymnasien",
+            state={"activeLayerIds": ["27764"]},
+            portal_context={
+                "config_json_url": "https://portal.example/config.json",
+                "services_json_url": "https://portal.example/services.json",
+            },
+        ),
+    ) as response:
+        assert response.status_code == 200
+        "".join(response.iter_text())
+
+
+def test_query_endpoint_missing_user_query_returns_400():
+    body = _run_input("placeholder")
+    body["messages"] = [{"id": "m1", "role": "assistant", "content": "not a user query"}]
+
+    response = client.post("/api/query", json=body)
+
+    assert response.status_code == 400
+
+
+def test_query_endpoint_oversized_state_returns_400():
+    body = _run_input(
+        "query", state={"activeLayerIds": [str(i) for i in range(51)]}
+    )
+
+    response = client.post("/api/query", json=body)
+
+    assert response.status_code == 400

@@ -17,6 +17,10 @@ that's ``None`` or not in ``_ACTIONABLE_TYPES``, or a filter attempt
 against a non-OAF layer, still leaves facts partially populated while
 ``commands`` stays empty. ``commands`` is the ground truth this
 component narrates from.
+
+Also takes conversation context (Section 10) so a follow-up reply can
+refer to what's already on the map ("von den angezeigten Schulen ...")
+instead of describing it as something brand new.
 """
 
 import uuid
@@ -26,6 +30,8 @@ from ag_ui.core import TextMessageContentEvent, TextMessageEndEvent, TextMessage
 from haystack import component
 
 from cwym_agent.bridge import AGUIEventBridge
+from cwym_agent.geodata.conversation_context import ConversationContext, render_context_block
+from cwym_agent.geodata.portal_catalog_resolver import LayerCatalog
 from cwym_agent.llm.qwen3_client import Qwen3Client
 
 
@@ -40,9 +46,11 @@ class TextResponseComponent:
         aggregated: dict,
         query: str,
         commands: list | None = None,
+        context: ConversationContext | None = None,
+        layer_catalog: LayerCatalog | None = None,
         bridge: AGUIEventBridge | None = None,
     ):
-        prompt = self._build_response_prompt(aggregated, query, commands or [])
+        prompt = self._build_response_prompt(aggregated, query, commands or [], context, layer_catalog)
 
         if bridge:
             message_id = str(uuid.uuid4())
@@ -62,7 +70,14 @@ class TextResponseComponent:
 
         return {"response_text": response_text}
 
-    def _build_response_prompt(self, aggregated: dict, query: str, commands: list) -> str:
+    def _build_response_prompt(
+        self,
+        aggregated: dict,
+        query: str,
+        commands: list,
+        context: ConversationContext | None = None,
+        layer_catalog: LayerCatalog | None = None,
+    ) -> str:
         """Build the NLG instruction prompt handed to ``self.llm.generate``.
 
         Describes what was resolved (location/layer/action, if any) so
@@ -78,8 +93,19 @@ class TextResponseComponent:
         were built.
         """
 
+        context_block = render_context_block(context, layer_catalog) if context is not None else ""
+        context_note = (
+            f"{context_block}\n\n"
+            "Beziehe dich bei einer Folgefrage auf das bereits Gezeigte "
+            "(z. B. \"von den angezeigten Schulen ...\") statt es als "
+            "etwas komplett Neues zu beschreiben.\n\n"
+            if context_block
+            else ""
+        )
+
         if not commands:
             return (
+                f"{context_note}"
                 f"Nutzeranfrage: \"{query}\"\n"
                 "Es konnte KEINE Aktion auf der Karte ausgeführt werden - "
                 "weder eine Kartenebene aktiviert noch gefiltert noch "
@@ -113,6 +139,7 @@ class TextResponseComponent:
 
         resolved = "; ".join(facts)
         return (
+            f"{context_note}"
             f"Nutzeranfrage: \"{query}\"\n"
             f"Aufgelöste Informationen: {resolved}\n"
             "Formuliere eine kurze, natürliche deutsche Antwort, die "

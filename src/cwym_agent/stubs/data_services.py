@@ -78,7 +78,12 @@ class StubDataServices:
         return _DEFAULT_LAYER
 
     def apply_filter(
-        self, query: str, layer: LayerMatch | None, location: LocationMatch | None = None
+        self,
+        query: str,
+        layer: LayerMatch | None,
+        location: LocationMatch | None = None,
+        mode: str = "replace",
+        prior_conditions: list | None = None,
     ) -> FilterResult | None:
         # Only the demo hospital layer has a canned filtered result, so
         # tests have something concrete (and a non-OAF-shaped fixture)

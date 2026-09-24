@@ -6,6 +6,8 @@ the same pattern used elsewhere for a cheap, deterministic LLM double.
 """
 
 from cwym_agent.components.text_response import TextResponseComponent
+from cwym_agent.geodata.conversation_context import ConversationContext, MapStateIn
+from cwym_agent.geodata.portal_catalog_resolver import LayerCatalog
 from cwym_agent.geodata.types import ActionMatch, FilterResult, LayerMatch, LocationMatch
 from cwym_agent.stubs.qwen3 import StubQwen3Generator
 
@@ -52,6 +54,48 @@ class TestNoCommandsMeansNoClaimOfSuccess:
         result = component.run(aggregated, aggregated["query"], commands=[])
 
         assert "Behaupte NICHT" in result["response_text"]
+
+
+class TestContextAwareNarration:
+    def test_empty_context_adds_nothing_to_prompt(self):
+        aggregated = _aggregated(query="Zeige mir StadtRAD", layer=_LAYER, action=_ACTION)
+        commands = [{"type": "ACTIVATE_LAYER", "payload": {"layerIds": ["27764"]}}]
+        context = ConversationContext(map_state=MapStateIn(), history=[])
+
+        result = component.run(aggregated, aggregated["query"], commands=commands, context=context)
+
+        assert "Aktueller Kartenzustand" not in result["response_text"]
+
+    def test_active_layer_context_prepended_to_prompt(self):
+        aggregated = _aggregated(query="Nur die Gymnasien", action=_ACTION)
+        commands = [{"type": "APPLY_FILTER", "payload": {}}]
+        context = ConversationContext(map_state=MapStateIn(active_layer_ids=["1732"]), history=[])
+        catalog = LayerCatalog({"1732": LayerMatch("Schulen Hamburg", "1732", 1.0)})
+
+        result = component.run(
+            aggregated, aggregated["query"], commands=commands, context=context, layer_catalog=catalog
+        )
+
+        prompt = result["response_text"]
+        assert "Schulen Hamburg (ID 1732)" in prompt
+        assert "beziehe dich bei einer Folgefrage" in prompt.lower() or "von den angezeigten" in prompt.lower()
+
+    def test_context_note_also_applies_to_the_honesty_gate_prompt(self):
+        """Even when nothing could be resolved, the model should still
+        see the active-layer context if any exists - doesn't change the
+        no-success rule, just gives it more to work with."""
+
+        aggregated = _aggregated(query="Nur die Gymnasien")
+        context = ConversationContext(map_state=MapStateIn(active_layer_ids=["1732"]), history=[])
+        catalog = LayerCatalog({"1732": LayerMatch("Schulen Hamburg", "1732", 1.0)})
+
+        result = component.run(
+            aggregated, aggregated["query"], commands=[], context=context, layer_catalog=catalog
+        )
+
+        prompt = result["response_text"]
+        assert "Schulen Hamburg (ID 1732)" in prompt
+        assert "Behaupte NICHT" in prompt
 
 
 class TestCommandsPresentNarratesFromFacts:

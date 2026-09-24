@@ -14,7 +14,10 @@ from typing import Any
 from haystack import component
 
 from cwym_agent.bridge import AGUIEventBridge
+from cwym_agent.geodata.conversation_context import ConversationContext
+from cwym_agent.geodata.portal_catalog_resolver import LayerCatalog
 from cwym_agent.geodata.real_data_services import RealDataServices
+from cwym_agent.geodata.types import FilterCondition
 
 
 def _serializable(value):
@@ -58,6 +61,8 @@ class AgentExecutorComponent:
         plan_json: dict,
         bridge: AGUIEventBridge | None = None,
         allowed_layer_ids: list[str] | None = None,
+        context: ConversationContext | None = None,
+        layer_catalog: LayerCatalog | None = None,
     ):
         execution_log = []
         # Accumulated as steps execute (not just aggregated afterward),
@@ -73,7 +78,9 @@ class AgentExecutorComponent:
         for step in plan_json.get("steps", []):
             agent_name = step["agent_name"]
             args = step.get("args", {})
-            result = self._run_sub_agent(agent_name, args, allowed_layer_ids, results_by_agent)
+            result = self._run_sub_agent(
+                agent_name, args, allowed_layer_ids, results_by_agent, context, layer_catalog
+            )
             results_by_agent[agent_name] = result
 
             if bridge:
@@ -91,6 +98,8 @@ class AgentExecutorComponent:
         args: dict,
         allowed_layer_ids: list[str] | None,
         results_by_agent: dict[str, object],
+        context: ConversationContext | None,
+        layer_catalog: LayerCatalog | None,
     ):
         query = args.get("query", "")
 
@@ -101,9 +110,43 @@ class AgentExecutorComponent:
         if agent_name == "action_detector":
             return self.data_services.detect_action(query)
         if agent_name == "filter_agent":
-            layer = results_by_agent.get("layer_resolver")
-            locations = results_by_agent.get("location_extractor") or []
-            location = locations[0] if locations else None
-            return self.data_services.apply_filter(query, layer, location)
+            return self._run_filter_agent(query, args, results_by_agent, context, layer_catalog)
 
         raise ValueError(f"Unknown sub-agent: {agent_name}")
+
+    def _run_filter_agent(
+        self,
+        query: str,
+        args: dict,
+        results_by_agent: dict[str, object],
+        context: ConversationContext | None,
+        layer_catalog: LayerCatalog | None,
+    ):
+        # A follow-up naming an already-active layer (Section 10.5's
+        # planning rule 2) doesn't call layer_resolver at all - the plan
+        # carries the target layerId directly, resolved to metadata via
+        # LayerCatalog instead of a fresh vector search.
+        layer = results_by_agent.get("layer_resolver")
+        target_layer_id = args.get("layerId")
+        if layer is None and target_layer_id and layer_catalog is not None:
+            layer = layer_catalog.get(target_layer_id)
+
+        locations = results_by_agent.get("location_extractor") or []
+        location = locations[0] if locations else None
+
+        mode = args.get("mode", "replace")
+        prior_conditions = None
+        if mode == "refine" and context is not None:
+            effective_layer_id = target_layer_id or (layer.layer_id if layer else None)
+            filter_state = next(
+                (f for f in context.map_state.filters if f.layer_id == effective_layer_id), None
+            )
+            if filter_state is not None:
+                prior_conditions = [
+                    FilterCondition(field=c.field, operator=c.operator, value=c.value)
+                    for c in filter_state.filter_spec.conditions
+                ]
+
+        return self.data_services.apply_filter(
+            query, layer, location, mode=mode, prior_conditions=prior_conditions
+        )

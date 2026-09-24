@@ -33,7 +33,7 @@ the same "agent-computed geometry pushed to the map" pattern as
 re-interpret against an already-loaded layer.
 """
 
-from typing import Annotated, Literal, Union
+from typing import Annotated, Any, Literal, Union
 
 from pydantic import BaseModel, ConfigDict, Field
 from pydantic.alias_generators import to_camel
@@ -101,6 +101,26 @@ class ClearHighlightsPayload(_CamelModel):
     pass
 
 
+class FilterConditionPayload(_CamelModel):
+    field: str
+    operator: str
+    value: Any
+
+
+class FilterAreaPayload(_CamelModel):
+    name: str
+    kind: Literal["bezirk", "stadtteil", "address"]
+
+
+class FilterSpecPayload(_CamelModel):
+    """Descriptive only - the frontend stores this with the overlay and
+    echoes it back in a later request's state.filters, but never
+    interprets it (cwym-agent-architecture.md Section 10.6)."""
+
+    conditions: list[FilterConditionPayload]
+    area: FilterAreaPayload | None = None
+
+
 class ApplyFilterPayload(_CamelModel):
     layer_id: str
     features: dict
@@ -114,6 +134,11 @@ class ApplyFilterPayload(_CamelModel):
     truncated: bool = False
     """True when total_matched is known and exceeds len(features) -
     FilterAgent caps how many features it requests per query."""
+    filter_spec: FilterSpecPayload | None = None
+    """The validated, merged conditions + area that produced these
+    features - lets a later refinement ("und jetzt die Gymnasien")
+    merge against what's actually active, without the backend needing
+    to remember anything server-side."""
 
 
 class OpenToolPayload(_CamelModel):

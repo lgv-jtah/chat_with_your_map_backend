@@ -26,6 +26,8 @@ from cwym_agent.components.command_builder import CommandBuilderComponent
 from cwym_agent.components.master_agent import MasterAgentComponent
 from cwym_agent.components.result_aggregator import ResultAggregatorComponent
 from cwym_agent.components.text_response import TextResponseComponent
+from cwym_agent.geodata.conversation_context import ConversationContext
+from cwym_agent.geodata.portal_catalog_resolver import LayerCatalog
 from cwym_agent.llm.qwen3_client import Qwen3Client
 from cwym_agent.geodata.real_data_services import RealDataServices
 
@@ -72,21 +74,36 @@ def run_pipeline(
     query: str,
     bridge: AGUIEventBridge | None = None,
     allowed_layer_ids: list[str] | None = None,
+    context: ConversationContext | None = None,
+    layer_catalog: LayerCatalog | None = None,
 ) -> str:
     """Run the pipeline for one query, returning the final response text.
 
     :param allowed_layer_ids: the requesting portal's own layer ids
         (``PortalCatalogResolver``, Section 8), or ``None`` to search
         Hamburg's full layer catalog unscoped.
+    :param context: this request's validated conversation context
+        (Section 10) - map state + recent history. ``None`` on a
+        request with no usable ``portal_context``/state to validate
+        against.
+    :param layer_catalog: the same portal catalog ``allowed_layer_ids``
+        was derived from, threaded separately because sub-agents/NLG
+        need layer *metadata* (names, an active layer's typ/url for
+        FilterAgent targeting), not just the bare id list.
     """
 
     result = pipeline.run(
         data={
-            "master_agent": {"query": query, "bridge": bridge},
-            "agent_executor": {"bridge": bridge, "allowed_layer_ids": allowed_layer_ids},
+            "master_agent": {"query": query, "context": context, "layer_catalog": layer_catalog, "bridge": bridge},
+            "agent_executor": {
+                "bridge": bridge,
+                "allowed_layer_ids": allowed_layer_ids,
+                "context": context,
+                "layer_catalog": layer_catalog,
+            },
             "result_aggregator": {"query": query},
-            "command_builder": {"bridge": bridge},
-            "text_response": {"query": query, "bridge": bridge},
+            "command_builder": {"context": context, "bridge": bridge},
+            "text_response": {"query": query, "context": context, "layer_catalog": layer_catalog, "bridge": bridge},
         }
     )
 

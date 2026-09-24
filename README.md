@@ -116,9 +116,9 @@ Qwen3Settings` and `cwym_agent.geodata.settings.GeodataSettings`):
 | `CWYM_ADDRESS_RESULT_SIZE` | `20` | Candidates fetched per address query (needs enough headroom to find district/county-level hits alongside street matches) |
 | `CWYM_GEODATA_TIMEOUT` | `15` | Request timeout (seconds) for both geodata endpoints |
 | `CWYM_PORTAL_CATALOG_CACHE_TTL` | `600` | Seconds `PortalCatalogResolver` trusts a fetched `config.json` before re-fetching |
-| `CWYM_PORTAL_CATALOG_ALLOWED_HOSTS` | *(empty)* | Comma-separated hostname allowlist for `config_json_url` (SSRF hardening) - empty means only the baseline scheme/private-IP checks apply |
-| `CWYM_PORTAL_CATALOG_MAX_RESPONSE_BYTES` | `5000000` | Max response size accepted when fetching a `config_json_url` |
-| `CWYM_PORTAL_CATALOG_ALLOW_LOOPBACK` | `true` | Whether `localhost`/loopback is an acceptable `config_json_url` host - defaults on since frontend and backend currently run on the same host; set to `false` once they're on separate hosts |
+| `CWYM_PORTAL_CATALOG_ALLOWED_HOSTS` | *(empty)* | Comma-separated hostname allowlist for `config_json_url`/`services_json_url` (SSRF hardening), checked independently for each - empty means only the baseline scheme/private-IP checks apply |
+| `CWYM_PORTAL_CATALOG_MAX_RESPONSE_BYTES` | `5000000` | Max response size accepted when fetching either URL |
+| `CWYM_PORTAL_CATALOG_ALLOW_LOOPBACK` | `true` | Whether `localhost`/loopback is an acceptable host for either URL - defaults on since frontend and backend currently run on the same host; set to `false` once they're on separate hosts |
 | `CWYM_FILTER_QUERYABLES_CACHE_TTL` | `3600` | Seconds `FilterAgent` trusts a fetched OGC API Features `/queryables` schema before re-fetching |
 | `CWYM_FILTER_RESULT_LIMIT` | `500` | Max features fetched per `FilterAgent` query |
 | `CWYM_FILTER_LLM_MAX_TOKENS` | `2048` | Token budget for `FilterAgent`'s condition-extraction LLM call |
@@ -163,13 +163,25 @@ make clean      # remove __pycache__/.pytest_cache
 ```bash
 curl -N -X POST http://localhost:8082/api/query \
   -H "Content-Type: application/json" \
-  -d '{"query": "Zeige mir Fahrradstationen in Wandsbek", "include_reasoning": true, "language": "German"}'
+  -d '{
+    "threadId": "demo-session", "runId": "r1",
+    "messages": [{"id": "m1", "role": "user", "content": "Zeige mir Fahrradstationen in Wandsbek"}],
+    "state": null, "tools": [], "context": [], "forwardedProps": {}
+  }'
 ```
+
+Request body is a standard AG-UI `RunAgentInput` (`threadId`/`runId`/
+`messages`/`state`/`tools`/`context`/`forwardedProps`) -
+`forwardedProps.portal_context` carries the requesting portal's
+`config_json_url`/`services_json_url` (Section 8 scoping); `state`
+carries the live map state for conversation-memory follow-ups (Section
+10) - see `cmym-agent-architecture.md` for the full shape.
 
 This streams an SSE event sequence:
 `RUN_STARTED` → `REASONING_*` → `TOOL_CALL_*` (one per sub-agent Qwen3
-decides to call - zero, one, or several) → `STATE_SNAPSHOT` →
-`TEXT_MESSAGE_*` → `RUN_FINISHED`.
+decides to call, interleaved with one `TOOL_CALL_*` cycle per
+`MapCommand` as `command_builder` builds it) → `TEXT_MESSAGE_*` →
+`RUN_FINISHED`.
 
 ## Tests
 

@@ -6,8 +6,12 @@ and that ``filter_agent`` sees the same plan's already-resolved
 layer/location results.
 """
 
+from ag_ui.core import RunAgentInput, UserMessage
+
 from cwym_agent.components.agent_executor import AgentExecutorComponent
-from cwym_agent.geodata.types import ActionMatch, FilterResult, LayerMatch, LocationMatch
+from cwym_agent.geodata.conversation_context import build_context
+from cwym_agent.geodata.portal_catalog_resolver import LayerCatalog
+from cwym_agent.geodata.types import ActionMatch, FilterCondition, FilterResult, LayerMatch, LocationMatch
 
 
 class FakeDataServices:
@@ -29,8 +33,8 @@ class FakeDataServices:
         self.detect_action_calls.append(query)
         return ActionMatch("Zeigen", 0.85)
 
-    def apply_filter(self, query: str, layer, location=None):
-        self.apply_filter_calls.append((query, layer, location))
+    def apply_filter(self, query: str, layer, location=None, mode="replace", prior_conditions=None):
+        self.apply_filter_calls.append((query, layer, location, mode, prior_conditions))
         return FilterResult(layer_id="1", features={"type": "FeatureCollection", "features": []}, number_matched=0)
 
 
@@ -86,10 +90,12 @@ class TestFilterAgentDispatch:
 
         component.run(_plan("location_extractor", "layer_resolver", "filter_agent"))
 
-        [(query, layer, location)] = data_services.apply_filter_calls
+        [(query, layer, location, mode, prior_conditions)] = data_services.apply_filter_calls
         assert query == "test"
         assert layer == LayerMatch("Some Layer", "1", 0.9)
         assert location == LocationMatch("Hamburg", 53.5511, 9.9937, 0.9)
+        assert mode == "replace"
+        assert prior_conditions is None
 
     def test_no_layer_or_location_step_means_both_none(self):
         data_services = FakeDataServices()
@@ -97,7 +103,7 @@ class TestFilterAgentDispatch:
 
         component.run(_plan("filter_agent"))
 
-        assert data_services.apply_filter_calls == [("test", None, None)]
+        assert data_services.apply_filter_calls == [("test", None, None, "replace", None)]
 
     def test_no_location_step_means_location_none(self):
         data_services = FakeDataServices()
@@ -105,9 +111,61 @@ class TestFilterAgentDispatch:
 
         component.run(_plan("layer_resolver", "filter_agent"))
 
-        [(_, layer, location)] = data_services.apply_filter_calls
+        [(_, layer, location, _mode, _prior)] = data_services.apply_filter_calls
         assert layer == LayerMatch("Some Layer", "1", 0.9)
         assert location is None
+
+    def test_layer_id_arg_targets_catalog_layer_without_layer_resolver_step(self):
+        """Planning rule 2 (Section 10.5): a follow-up filtering an
+        already-active layer plans filter_agent with a layerId arg and
+        no layer_resolver step at all."""
+
+        data_services = FakeDataServices()
+        component = AgentExecutorComponent(data_services=data_services)
+        catalog = LayerCatalog({"1732": LayerMatch("Schulen Hamburg", "1732", 1.0, typ="OAF")})
+        plan = {"steps": [{"agent_name": "filter_agent", "args": {"query": "test", "layerId": "1732"}}]}
+
+        component.run(plan, layer_catalog=catalog)
+
+        [(_, layer, _loc, _mode, _prior)] = data_services.apply_filter_calls
+        assert layer == LayerMatch("Schulen Hamburg", "1732", 1.0, typ="OAF")
+
+    def test_refine_mode_looks_up_prior_conditions_for_target_layer(self):
+        data_services = FakeDataServices()
+        component = AgentExecutorComponent(data_services=data_services)
+        catalog = LayerCatalog({"1732": LayerMatch("Schulen Hamburg", "1732", 1.0, typ="OAF")})
+        context = build_context(
+            RunAgentInput(
+                thread_id="t",
+                run_id="r",
+                state={
+                    "filters": [
+                        {
+                            "layerId": "1732",
+                            "filterSpec": {
+                                "conditions": [{"field": "schulform", "operator": "eq", "value": "Grundschule"}]
+                            },
+                        }
+                    ]
+                },
+                messages=[UserMessage(id="1", content="nur Gymnasien")],
+                tools=[],
+                context=[],
+                forwarded_props={},
+            ),
+            catalog,
+        )
+        plan = {
+            "steps": [
+                {"agent_name": "filter_agent", "args": {"query": "nur Gymnasien", "layerId": "1732", "mode": "refine"}}
+            ]
+        }
+
+        component.run(plan, context=context, layer_catalog=catalog)
+
+        [(_, _layer, _loc, mode, prior)] = data_services.apply_filter_calls
+        assert mode == "refine"
+        assert prior == [FilterCondition(field="schulform", operator="eq", value="Grundschule")]
 
 
 class TestFilterAgentToolCallResultView:
@@ -118,7 +176,7 @@ class TestFilterAgentToolCallResultView:
         view gets a feature_count instead."""
 
         class DataServicesWithFeatures(FakeDataServices):
-            def apply_filter(self, query, layer, location=None):
+            def apply_filter(self, query, layer, location=None, mode="replace", prior_conditions=None):
                 return FilterResult(
                     layer_id="1",
                     features={

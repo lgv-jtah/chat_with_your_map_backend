@@ -1,7 +1,8 @@
 """Unit tests for ``CommandBuilderComponent._build_commands``."""
 
 from cwym_agent.components.command_builder import CommandBuilderComponent
-from cwym_agent.geodata.types import ActionMatch, FilterResult, LayerMatch, LocationMatch
+from cwym_agent.geodata.conversation_context import ConversationContext, MapStateIn
+from cwym_agent.geodata.types import ActionMatch, FilterCondition, FilterResult, LayerMatch, LocationMatch
 
 _WANDSBEK_BOUNDARY = {
     "type": "Polygon",
@@ -171,3 +172,63 @@ class TestBuildFilterCommands:
         commands = builder._build_commands(aggregated)
 
         assert "ACTIVATE_LAYER" not in [cmd["type"] for cmd in commands]
+
+
+class TestFilterCommandsWithContext:
+    def test_target_layer_already_active_deactivates_it_before_filtering(self):
+        """Section 10.7: a follow-up filtering an already-shown layer
+        must not display the full layer and the filtered overlay at
+        once."""
+
+        filter_result = FilterResult(layer_id="27714", features=_FEATURES, number_matched=1)
+        aggregated = _aggregated("Filter", filter_result=filter_result)
+        context = ConversationContext(
+            map_state=MapStateIn(active_layer_ids=["27714"]), history=[]
+        )
+
+        commands = builder._build_commands(aggregated, context)
+
+        assert [cmd["type"] for cmd in commands] == ["DEACTIVATE_LAYER", "APPLY_FILTER"]
+        assert commands[0]["payload"]["layerIds"] == ["27714"]
+
+    def test_target_layer_not_active_skips_deactivate(self):
+        filter_result = FilterResult(layer_id="27714", features=_FEATURES, number_matched=1)
+        aggregated = _aggregated("Filter", filter_result=filter_result)
+        context = ConversationContext(map_state=MapStateIn(active_layer_ids=["99999"]), history=[])
+
+        commands = builder._build_commands(aggregated, context)
+
+        assert [cmd["type"] for cmd in commands] == ["APPLY_FILTER"]
+
+    def test_no_context_behaves_like_before(self):
+        filter_result = FilterResult(layer_id="27714", features=_FEATURES, number_matched=1)
+        aggregated = _aggregated("Filter", filter_result=filter_result)
+
+        commands = builder._build_commands(aggregated, context=None)
+
+        assert [cmd["type"] for cmd in commands] == ["APPLY_FILTER"]
+
+    def test_filter_spec_carries_conditions_and_area(self):
+        filter_result = FilterResult(
+            layer_id="27714",
+            features=_FEATURES,
+            number_matched=1,
+            label="Wandsbek",
+            area_kind="bezirk",
+            conditions=[FilterCondition(field="schulform", operator="eq", value="Gymnasium")],
+        )
+        aggregated = _aggregated("Filter", filter_result=filter_result)
+
+        commands = builder._build_commands(aggregated)
+
+        filter_spec = commands[0]["payload"]["filterSpec"]
+        assert filter_spec["conditions"] == [{"field": "schulform", "operator": "eq", "value": "Gymnasium"}]
+        assert filter_spec["area"] == {"name": "Wandsbek", "kind": "bezirk"}
+
+    def test_no_conditions_or_area_yields_no_filter_spec(self):
+        filter_result = FilterResult(layer_id="27714", features=_FEATURES, number_matched=1)
+        aggregated = _aggregated("Filter", filter_result=filter_result)
+
+        commands = builder._build_commands(aggregated)
+
+        assert commands[0]["payload"]["filterSpec"] is None
