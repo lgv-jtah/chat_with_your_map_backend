@@ -82,6 +82,21 @@ class GeodataSettings:
         default_factory=lambda: _env_float("CWYM_PORTAL_CATALOG_CACHE_TTL", 600.0)
     )
 
+    # PortalCatalogResolver fetches a client-supplied URL server-side -
+    # restrict it (SSRF hardening). Empty by default: only the baseline
+    # scheme/private-IP checks apply; set this to require an explicit
+    # hostname allowlist on top of them.
+    portal_catalog_allowed_hosts: frozenset[str] = field(
+        default_factory=lambda: frozenset(
+            h.strip()
+            for h in os.environ.get("CWYM_PORTAL_CATALOG_ALLOWED_HOSTS", "").split(",")
+            if h.strip()
+        )
+    )
+    portal_catalog_max_response_bytes: int = field(
+        default_factory=lambda: _env_int("CWYM_PORTAL_CATALOG_MAX_RESPONSE_BYTES", 5_000_000)
+    )
+
     # FilterAgent (cwym-agent-architecture.md Section 9): CQL2 filtering
     # against a layer's own OGC API Features endpoint.
     filter_queryables_cache_ttl: float = field(

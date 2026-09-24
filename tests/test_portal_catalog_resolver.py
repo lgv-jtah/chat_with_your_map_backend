@@ -118,3 +118,86 @@ class TestGetAllowedLayerIds:
         resolver = _resolver(handler)
 
         assert resolver.get_allowed_layer_ids("https://portal.example/config.json") is None
+
+
+class TestSsrfGuard:
+    """A rejected URL must never actually be fetched - the handler raises
+    if called, so any of these tests would fail loudly (not just return
+    None for an unrelated reason) if the guard let the request through."""
+
+    def _guarded_resolver(self, **settings_kwargs) -> PortalCatalogResolver:
+        def handler(request: httpx.Request) -> httpx.Response:
+            raise AssertionError(f"request should have been rejected before fetching: {request.url}")
+
+        return _resolver(handler, **settings_kwargs)
+
+    def test_rejects_cloud_metadata_ip_literal(self):
+        resolver = self._guarded_resolver()
+
+        assert resolver.get_allowed_layer_ids("http://169.254.169.254/config.json") is None
+
+    def test_rejects_loopback_ip_literal(self):
+        resolver = self._guarded_resolver()
+
+        assert resolver.get_allowed_layer_ids("http://127.0.0.1/config.json") is None
+
+    def test_rejects_private_ip_literal(self):
+        resolver = self._guarded_resolver()
+
+        assert resolver.get_allowed_layer_ids("http://10.0.0.5/config.json") is None
+
+    def test_rejects_ipv6_loopback_literal(self):
+        resolver = self._guarded_resolver()
+
+        assert resolver.get_allowed_layer_ids("http://[::1]/config.json") is None
+
+    def test_rejects_localhost_hostname(self):
+        resolver = self._guarded_resolver()
+
+        assert resolver.get_allowed_layer_ids("http://localhost/config.json") is None
+
+    def test_rejects_non_http_scheme(self):
+        resolver = self._guarded_resolver()
+
+        assert resolver.get_allowed_layer_ids("file:///etc/passwd") is None
+
+    def test_rejects_credentials_in_url(self):
+        resolver = self._guarded_resolver()
+
+        assert resolver.get_allowed_layer_ids("https://user:pass@portal.example/config.json") is None
+
+    def test_allows_public_hostname_by_default(self):
+        resolver = _resolver(lambda request: httpx.Response(200, json=_SAMPLE_CONFIG_JSON))
+
+        assert resolver.get_allowed_layer_ids("https://portal.example/config.json") is not None
+
+    def test_allowlist_rejects_host_not_in_it(self):
+        resolver = self._guarded_resolver(portal_catalog_allowed_hosts=frozenset({"other.example"}))
+
+        assert resolver.get_allowed_layer_ids("https://portal.example/config.json") is None
+
+    def test_allowlist_permits_listed_host(self):
+        resolver = _resolver(
+            lambda request: httpx.Response(200, json=_SAMPLE_CONFIG_JSON),
+            portal_catalog_allowed_hosts=frozenset({"portal.example"}),
+        )
+
+        assert resolver.get_allowed_layer_ids("https://portal.example/config.json") is not None
+
+    def test_rejects_response_over_content_length_cap(self):
+        def handler(request: httpx.Request) -> httpx.Response:
+            return httpx.Response(200, headers={"content-length": "999999999"}, json=_SAMPLE_CONFIG_JSON)
+
+        resolver = _resolver(handler, portal_catalog_max_response_bytes=1000)
+
+        assert resolver.get_allowed_layer_ids("https://portal.example/config.json") is None
+
+    def test_rejects_response_over_actual_size_cap(self):
+        oversized = {"layerConfig": {"subjectlayer": {"elements": [{"id": "x" * 5000}]}}}
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            return httpx.Response(200, json=oversized)
+
+        resolver = _resolver(handler, portal_catalog_max_response_bytes=1000)
+
+        assert resolver.get_allowed_layer_ids("https://portal.example/config.json") is None

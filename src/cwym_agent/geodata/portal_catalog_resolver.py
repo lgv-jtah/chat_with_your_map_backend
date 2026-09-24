@@ -43,16 +43,67 @@ A fetch/parse failure logs a warning and returns ``None`` (unscoped
 fallback) rather than failing the whole query - scoping is a
 correctness nicety for a specific portal, not something that should
 turn a temporary config.json outage into a hard error for every query.
+
+**SSRF hardening.** ``config_json_url`` is client-supplied and fetched
+server-side, and ``/api/query`` has no origin restriction
+(``allow_origins=["*"]``) - so any web page could otherwise point this
+at an internal address. Before fetching, ``_check_url`` rejects
+non-http(s) schemes, URLs carrying credentials, ``localhost``, and any
+IP-literal host that's loopback/link-local/private/reserved/multicast
+(covers the common concrete targets, e.g. cloud metadata's
+``169.254.169.254``) - plus, if ``GeodataSettings.portal_catalog_allowed_hosts``
+is configured, any host outside that allowlist. The response is also
+capped at ``portal_catalog_max_response_bytes``. A rejected URL is
+treated the same as any other fetch failure: logged and falls back to
+unscoped search, not a raised exception. Deliberately does **not**
+resolve DNS to catch a domain name that resolves to a private IP
+(rebinding) - doing that safely needs a custom httpx transport so the
+checked IP is the one actually connected to, not just looked up ahead
+of time; a documented scope limit here, not an oversight.
 """
 
+import ipaddress
 import logging
 import time
+from urllib.parse import urlsplit
 
 import httpx
 
 from cwym_agent.geodata.settings import GeodataSettings
 
 logger = logging.getLogger(__name__)
+
+
+class _URLRejected(Exception):
+    """Internal only - caught by get_allowed_layer_ids() and treated like
+    any other fetch failure (fail open to unscoped search)."""
+
+
+def _check_url(url: str, allowed_hosts: frozenset[str]) -> None:
+    parts = urlsplit(url)
+
+    if parts.scheme not in ("http", "https"):
+        raise _URLRejected(f"unsupported scheme: {parts.scheme!r}")
+    if parts.username or parts.password:
+        raise _URLRejected("URL must not carry credentials")
+
+    hostname = parts.hostname
+    if not hostname:
+        raise _URLRejected("URL has no hostname")
+    if hostname == "localhost":
+        raise _URLRejected("localhost is not allowed")
+
+    try:
+        ip = ipaddress.ip_address(hostname)
+    except ValueError:
+        ip = None
+    if ip is not None and (
+        ip.is_private or ip.is_loopback or ip.is_link_local or ip.is_reserved or ip.is_multicast
+    ):
+        raise _URLRejected(f"IP literal not allowed: {hostname}")
+
+    if allowed_hosts and hostname not in allowed_hosts:
+        raise _URLRejected(f"host not in allowlist: {hostname}")
 
 
 def _flatten_layer_ids(elements: list[dict]) -> set[str]:
@@ -102,10 +153,19 @@ class PortalCatalogResolver:
             return cached[1]
 
         try:
+            _check_url(config_json_url, self.settings.portal_catalog_allowed_hosts)
+
             response = self._client.get(config_json_url)
             response.raise_for_status()
+
+            content_length = response.headers.get("content-length")
+            if content_length and int(content_length) > self.settings.portal_catalog_max_response_bytes:
+                raise _URLRejected(f"response too large: {content_length} bytes")
+            if len(response.content) > self.settings.portal_catalog_max_response_bytes:
+                raise _URLRejected(f"response too large: {len(response.content)} bytes")
+
             layer_ids = _extract_layer_ids(response.json())
-        except (httpx.HTTPError, ValueError) as exc:
+        except (httpx.HTTPError, ValueError, _URLRejected) as exc:
             logger.warning(
                 "Failed to fetch/parse config.json at %s (%s); falling back to "
                 "unscoped layer search for this query",
