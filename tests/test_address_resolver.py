@@ -107,6 +107,42 @@ class TestResolve:
         assert result is not None
         assert result.boundary == {"type": "Polygon", "coordinates": polygon["coordinates"]}
 
+    def test_district_type_hit_gets_stadtteil_kind(self):
+        hits = [_hit("Ottensen", 9.93, 53.55, "District", 71.1)]
+        resolver = _client_for(hits)
+
+        result = resolver.resolve("Ottensen")
+
+        assert result is not None
+        assert result.kind == "stadtteil"
+
+    def test_county_type_hit_gets_bezirk_kind(self):
+        hits = [_hit("Altona", 9.85, 53.59, "County", 57.7)]
+        resolver = _client_for(hits)
+
+        result = resolver.resolve("Altona")
+
+        assert result is not None
+        assert result.kind == "bezirk"
+
+    def test_address_type_hit_gets_address_kind(self):
+        hits = [_hit("Mönckebergstraße 1", 10.0, 53.55, "Address", 41.1)]
+        resolver = _client_for(hits)
+
+        result = resolver.resolve("Mönckebergstraße 1")
+
+        assert result is not None
+        assert result.kind == "address"
+
+    def test_street_type_hit_gets_no_kind(self):
+        hits = [_hit("Mönckebergstraße", 10.0, 53.55, "Street", 50.0)]
+        resolver = _client_for(hits)
+
+        result = resolver.resolve("Mönckebergstraße")
+
+        assert result is not None
+        assert result.kind is None
+
     def test_district_hit_with_polygon_extent_also_populates_bbox_extent(self):
         polygon = {
             "type": "Polygon",

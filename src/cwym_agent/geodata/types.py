@@ -26,6 +26,20 @@ class LocationMatch:
     zoom to: derived from `boundary` when one exists, or a hardcoded
     region extent for a location (like the Hamburg-wide fallback) that
     has no real boundary geometry to derive one from."""
+    kind: str | None = None
+    """"bezirk" | "stadtteil" | "address", or None when the resolved hit
+    is street-level or otherwise doesn't fit one of those (matches the
+    MapCommand schema's Area/NamedLocation `kind` enum). Lets a location
+    travel by name+kind for later re-resolution (conversation context,
+    cwym-agent-architecture.md Section 10) without trusting client-
+    supplied geometry. Derived from Hamburg's own address index `type`
+    field - verified live (ImplementationLog.md): `"county"` is Bezirk
+    (e.g. "Altona", "Hamburg-Harburg"), `"district"` is Stadtteil (e.g.
+    "Altona-Altstadt", "Ottensen", "Eppendorf" - including a Stadtteil
+    that shares its Bezirk's exact name, like "Eimsbüttel"), `"address"`
+    is address. `"state"`/`"city"` (also in `_BROAD_TYPES`) have no
+    observed hits in Hamburg's index and no clean equivalent here, so
+    they map to None rather than a guessed value."""
 
 
 @dataclass

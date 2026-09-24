@@ -43,6 +43,20 @@ _BROAD_TYPES = frozenset({"state", "city", "county", "district"})
 # types are trustworthy as an area boundary.
 _AREA_GEOMETRY_TYPES = frozenset({"Polygon", "MultiPolygon"})
 
+# Hamburg's raw properties.type -> LocationMatch.kind, verified live
+# against the real API (ImplementationLog.md): "county" is Bezirk
+# (Hamburg's 7 boroughs, e.g. "Altona", "Hamburg-Harburg"), "district"
+# is Stadtteil (the finer-grained quarters, e.g. "Altona-Altstadt",
+# "Ottensen", "Eppendorf" - confirmed distinct from same-named Bezirke
+# via "Eimsbüttel", which has both a county-type and a district-type
+# hit). "state"/"city" have no observed hits and no clean equivalent,
+# so they're deliberately left unmapped (kind=None) rather than guessed.
+_KIND_BY_TYPE = {
+    "county": "bezirk",
+    "district": "stadtteil",
+    "address": "address",
+}
+
 
 class AddressResolver:
     """Resolves Hamburg location strings to coordinates."""
@@ -144,6 +158,7 @@ class AddressResolver:
             confidence=confidence,
             boundary=boundary,
             extent=AddressResolver._bbox_of(boundary) if boundary else None,
+            kind=_KIND_BY_TYPE.get((properties.get("type") or "").lower()),
         )
 
     @staticmethod
