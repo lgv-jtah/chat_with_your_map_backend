@@ -18,6 +18,7 @@ _DISTRICT_LOCATION = LocationMatch(
     confidence=0.95,
     boundary=_WANDSBEK_BOUNDARY,
     extent=_WANDSBEK_EXTENT,
+    kind="bezirk",
 )
 _STREET_LOCATION = LocationMatch(
     name="Mönckebergstraße", latitude=53.55, longitude=10.0, confidence=0.9, boundary=None
@@ -59,7 +60,9 @@ class TestBuildCommands:
         assert commands[0]["payload"]["layerIds"] == ["27764"]
         assert commands[1]["payload"]["geometry"] == _WANDSBEK_BOUNDARY
         assert commands[1]["payload"]["label"] == "Wandsbek"
+        assert commands[1]["payload"]["kind"] == "bezirk"
         assert commands[2]["payload"]["locations"][0]["name"] == "Wandsbek"
+        assert commands[2]["payload"]["locations"][0]["kind"] == "bezirk"
         assert tuple(commands[3]["payload"]["bbox"]) == _WANDSBEK_EXTENT
 
     def test_layer_and_street_location_builds_only_activate_and_navigate(self):

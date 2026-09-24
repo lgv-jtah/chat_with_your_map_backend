@@ -57,6 +57,10 @@ class Coordinates(_CamelModel):
 class NamedLocation(_CamelModel):
     name: str
     coordinates: Coordinates
+    kind: Literal["bezirk", "stadtteil", "address"] | None = None
+    """Lets the frontend record `lastLocation` (Section 10.3) for a
+    single-location NAVIGATE_TO_LOCATION without guessing - absent for
+    a resolved hit with no kind (e.g. a street-level match)."""
 
 
 class OpenToolPrefill(_CamelModel):
@@ -90,6 +94,9 @@ class DrawBoundaryPayload(_CamelModel):
     geometry: dict
     style: Literal["highlight", "outline"] = "outline"
     label: str | None = None
+    kind: Literal["bezirk", "stadtteil", "address"] | None = None
+    """Lets the frontend record `lastLocation` (Section 10.3) alongside
+    `label` without guessing."""
 
 
 class HighlightFeaturePayload(_CamelModel):

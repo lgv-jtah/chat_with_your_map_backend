@@ -147,6 +147,7 @@ class CommandBuilderComponent:
                     payload=DrawBoundaryPayload(
                         geometry=boundary_location.boundary,
                         label=boundary_location.name,
+                        kind=boundary_location.kind,
                     ),
                 ).model_dump(by_alias=True)
             )
@@ -160,6 +161,7 @@ class CommandBuilderComponent:
                             NamedLocation(
                                 name=loc.name,
                                 coordinates=Coordinates(lon=loc.longitude, lat=loc.latitude),
+                                kind=loc.kind,
                             )
                             for loc in locations
                         ]
