@@ -48,8 +48,21 @@ class Qwen3Settings:
     # similarly reasoning-heavy classification-style calls elsewhere in
     # this codebase (layer_llm_max_tokens/filter_llm_max_tokens, both
     # 2048).
+    #
+    # 2048 still wasn't enough: live-tested a realistic multi-turn
+    # scenario (several turns of history + an active layer) 5 times -
+    # 3 came back with zero tool calls despite the model's own
+    # reasoning describing an intent to call one. Confirmed the
+    # mechanism directly: reasoning length is highly variable run to
+    # run for the exact same prompt (949 completion tokens in one
+    # successful raw-stream capture vs. a several-thousand-token
+    # reasoning trace observed live in the browser for the failing
+    # case) - the budget is being hard-exhausted on the longer
+    # samples, not the model deliberately declining to act. Bumped to
+    # 4096 and re-verified the same failing scenario's success rate
+    # improved before committing this value.
     max_tokens_plan: int = field(
-        default_factory=lambda: _env_int("CWYM_QWEN3_MAX_TOKENS_PLAN", 2048)
+        default_factory=lambda: _env_int("CWYM_QWEN3_MAX_TOKENS_PLAN", 4096)
     )
     max_tokens_generate: int = field(
         default_factory=lambda: _env_int("CWYM_QWEN3_MAX_TOKENS_GENERATE", 512)
