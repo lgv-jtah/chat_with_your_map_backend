@@ -1,12 +1,19 @@
 """Assembles the CWYM-Agent Haystack pipeline.
 
 Wires ``MasterAgentComponent`` -> ``AgentExecutorComponent`` ->
-``ResultAggregatorComponent`` -> (``CommandBuilderComponent`` and
-``TextResponseComponent``, fan-out from the same aggregated result)
-together, and exposes a single ``run`` entry point that also forwards the
-``query`` and ``bridge`` inputs to every component that needs them
-(matching how Haystack allows top-level unconnected inputs to be
-supplied per component in ``pipeline.run(data=...)``).
+``ResultAggregatorComponent`` -> ``CommandBuilderComponent`` ->
+``TextResponseComponent`` together, and exposes a single ``run`` entry
+point that also forwards the ``query`` and ``bridge`` inputs to every
+component that needs them (matching how Haystack allows top-level
+unconnected inputs to be supplied per component in
+``pipeline.run(data=...)``).
+
+``TextResponseComponent`` runs *after* ``CommandBuilderComponent``, not
+in parallel from the same aggregated result - it also takes
+``CommandBuilderComponent``'s ``commands`` output as an input, so the
+reply it narrates is grounded in what was actually built, not just in
+what sub-agents resolved (see ``TextResponseComponent``'s own
+docstring for the live bug this fixes).
 """
 
 from typing import Any
@@ -55,6 +62,7 @@ def build_pipeline(llm: Any | None = None, data_services: Any | None = None) -> 
     pipeline.connect("agent_executor.execution_log", "result_aggregator.execution_log")
     pipeline.connect("result_aggregator.aggregated", "command_builder.aggregated")
     pipeline.connect("result_aggregator.aggregated", "text_response.aggregated")
+    pipeline.connect("command_builder.commands", "text_response.commands")
 
     return pipeline
 
