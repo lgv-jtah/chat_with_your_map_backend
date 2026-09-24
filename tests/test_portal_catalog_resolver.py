@@ -136,24 +136,29 @@ class TestSsrfGuard:
 
         assert resolver.get_allowed_layer_ids("http://169.254.169.254/config.json") is None
 
-    def test_rejects_loopback_ip_literal(self):
-        resolver = self._guarded_resolver()
-
-        assert resolver.get_allowed_layer_ids("http://127.0.0.1/config.json") is None
-
     def test_rejects_private_ip_literal(self):
         resolver = self._guarded_resolver()
 
         assert resolver.get_allowed_layer_ids("http://10.0.0.5/config.json") is None
 
-    def test_rejects_ipv6_loopback_literal(self):
-        resolver = self._guarded_resolver()
+    def test_loopback_allowed_by_default(self):
+        """This project's only real deployment today runs frontend and
+        backend on the same host - the frontend's own resolved
+        config.json URL legitimately is loopback in that case, so
+        rejecting it by default would silently disable scoping for the
+        one setup that actually exists (confirmed live)."""
 
+        resolver = _resolver(lambda request: httpx.Response(200, json=_SAMPLE_CONFIG_JSON))
+
+        assert resolver.get_allowed_layer_ids("http://127.0.0.1/config.json") is not None
+        assert resolver.get_allowed_layer_ids("http://[::1]/config.json") is not None
+        assert resolver.get_allowed_layer_ids("http://localhost/config.json") is not None
+
+    def test_loopback_rejected_when_disabled(self):
+        resolver = self._guarded_resolver(portal_catalog_allow_loopback=False)
+
+        assert resolver.get_allowed_layer_ids("http://127.0.0.1/config.json") is None
         assert resolver.get_allowed_layer_ids("http://[::1]/config.json") is None
-
-    def test_rejects_localhost_hostname(self):
-        resolver = self._guarded_resolver()
-
         assert resolver.get_allowed_layer_ids("http://localhost/config.json") is None
 
     def test_rejects_non_http_scheme(self):

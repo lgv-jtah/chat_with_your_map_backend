@@ -48,18 +48,32 @@ turn a temporary config.json outage into a hard error for every query.
 server-side, and ``/api/query`` has no origin restriction
 (``allow_origins=["*"]``) - so any web page could otherwise point this
 at an internal address. Before fetching, ``_check_url`` rejects
-non-http(s) schemes, URLs carrying credentials, ``localhost``, and any
-IP-literal host that's loopback/link-local/private/reserved/multicast
-(covers the common concrete targets, e.g. cloud metadata's
-``169.254.169.254``) - plus, if ``GeodataSettings.portal_catalog_allowed_hosts``
-is configured, any host outside that allowlist. The response is also
-capped at ``portal_catalog_max_response_bytes``. A rejected URL is
-treated the same as any other fetch failure: logged and falls back to
-unscoped search, not a raised exception. Deliberately does **not**
-resolve DNS to catch a domain name that resolves to a private IP
-(rebinding) - doing that safely needs a custom httpx transport so the
-checked IP is the one actually connected to, not just looked up ahead
-of time; a documented scope limit here, not an oversight.
+non-http(s) schemes, URLs carrying credentials, and any IP-literal host
+that's link-local/private/reserved/multicast (covers the common
+concrete targets, e.g. cloud metadata's ``169.254.169.254``) - plus, if
+``GeodataSettings.portal_catalog_allowed_hosts`` is configured, any
+host outside that allowlist. The response is also capped at
+``portal_catalog_max_response_bytes``. A rejected URL is treated the
+same as any other fetch failure: logged and falls back to unscoped
+search, not a raised exception. Deliberately does **not** resolve DNS
+to catch a domain name that resolves to a private IP (rebinding) -
+doing that safely needs a custom httpx transport so the checked IP is
+the one actually connected to, not just looked up ahead of time; a
+documented scope limit here, not an oversight.
+
+**Loopback/``localhost`` is allowed by default**
+(``GeodataSettings.portal_catalog_allow_loopback``, defaulting to
+``True``) - deliberately, not an oversight, same reasoning as the
+wide-open CORS above: this project's only real deployment today runs
+the frontend and backend on the same host, so the frontend's own
+resolved ``config.json`` URL (built from ``window.location``,
+mirroring how it boots itself) *is* loopback in that case, and
+rejecting it would silently disable scoping for the one setup that
+actually exists - confirmed live: the frontend's own dev server
+(``webpack-dev-server``, ``localhost``) and this backend running
+locally reproduces exactly that. Set this to ``False`` once frontend
+and backend are deployed on genuinely separate hosts and loopback is
+no longer a legitimate target, alongside tightening CORS.
 """
 
 import ipaddress
@@ -79,7 +93,10 @@ class _URLRejected(Exception):
     any other fetch failure (fail open to unscoped search)."""
 
 
-def _check_url(url: str, allowed_hosts: frozenset[str]) -> None:
+_LOOPBACK_HOSTNAMES = frozenset({"localhost"})
+
+
+def _check_url(url: str, allowed_hosts: frozenset[str], allow_loopback: bool) -> None:
     parts = urlsplit(url)
 
     if parts.scheme not in ("http", "https"):
@@ -90,15 +107,18 @@ def _check_url(url: str, allowed_hosts: frozenset[str]) -> None:
     hostname = parts.hostname
     if not hostname:
         raise _URLRejected("URL has no hostname")
-    if hostname == "localhost":
-        raise _URLRejected("localhost is not allowed")
 
     try:
         ip = ipaddress.ip_address(hostname)
     except ValueError:
         ip = None
-    if ip is not None and (
-        ip.is_private or ip.is_loopback or ip.is_link_local or ip.is_reserved or ip.is_multicast
+
+    is_loopback = hostname in _LOOPBACK_HOSTNAMES or (ip is not None and ip.is_loopback)
+    if is_loopback and not allow_loopback:
+        raise _URLRejected(f"loopback host not allowed: {hostname}")
+
+    if ip is not None and not is_loopback and (
+        ip.is_private or ip.is_link_local or ip.is_reserved or ip.is_multicast
     ):
         raise _URLRejected(f"IP literal not allowed: {hostname}")
 
@@ -153,7 +173,11 @@ class PortalCatalogResolver:
             return cached[1]
 
         try:
-            _check_url(config_json_url, self.settings.portal_catalog_allowed_hosts)
+            _check_url(
+                config_json_url,
+                self.settings.portal_catalog_allowed_hosts,
+                self.settings.portal_catalog_allow_loopback,
+            )
 
             response = self._client.get(config_json_url)
             response.raise_for_status()

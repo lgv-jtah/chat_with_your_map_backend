@@ -16,6 +16,10 @@ def _env_int(name: str, default: int) -> int:
     return int(os.environ.get(name, str(default)))
 
 
+def _env_bool(name: str, default: bool) -> bool:
+    return os.environ.get(name, str(default)).strip().lower() in ("1", "true", "yes")
+
+
 @dataclass(frozen=True)
 class GeodataSettings:
     """Connection/search settings for Hamburg's public geodata APIs."""
@@ -95,6 +99,13 @@ class GeodataSettings:
     )
     portal_catalog_max_response_bytes: int = field(
         default_factory=lambda: _env_int("CWYM_PORTAL_CATALOG_MAX_RESPONSE_BYTES", 5_000_000)
+    )
+    # Defaults to True: this project's only real deployment today runs
+    # frontend and backend on the same host, so the frontend's own
+    # resolved config.json URL legitimately is loopback - same "tighten
+    # before real deployment" posture as the wide-open CORS setting.
+    portal_catalog_allow_loopback: bool = field(
+        default_factory=lambda: _env_bool("CWYM_PORTAL_CATALOG_ALLOW_LOOPBACK", True)
     )
 
     # FilterAgent (cwym-agent-architecture.md Section 9): CQL2 filtering
