@@ -57,7 +57,10 @@ _CONDITION_EXTRACTION_PROMPT_TEMPLATE = (
     "Ort), antworte mit einem leeren Array: []"
 )
 
-_VALID_OPERATORS = frozenset({"eq", "ne", "lt", "lte", "gt", "gte", "contains"})
+FILTER_OPERATORS = frozenset({"eq", "ne", "lt", "lte", "gt", "gte", "contains"})
+"""Public so ``build_context`` (conversation context validation, Section
+10.4) can reject a client-echoed ``filterSpec`` condition whose operator
+isn't one FilterAgent actually knows how to compile."""
 
 _OPERATOR_TO_CQL2 = {
     "eq": "=",
@@ -181,8 +184,27 @@ class FilterAgent:
         self.queryables_cache = queryables_cache or QueryablesCache(self.settings, self._client)
 
     def filter(
-        self, query: str, layer: LayerMatch | None, location: LocationMatch | None = None
+        self,
+        query: str,
+        layer: LayerMatch | None,
+        location: LocationMatch | None = None,
+        mode: str = "replace",
+        prior_conditions: list[FilterCondition] | None = None,
     ) -> FilterResult | None:
+        """``layer`` may come from a fresh ``layer_resolver`` match, or
+        (a conversation-context follow-up naming an already-active
+        layer, cmym-agent-architecture.md Section 10) from
+        ``LayerCatalog.get(layer_id)`` - either way it's just a
+        ``LayerMatch`` here, no special-casing needed.
+
+        ``mode="refine"`` merges this turn's extracted conditions with
+        ``prior_conditions`` (Section 10.6): a new condition on a field
+        that already has one replaces it ("nur Gymnasien" after "nur
+        Grundschulen" means Gymnasien, not an empty intersection);
+        conditions on other fields are kept (ANDed). ``mode="replace"``
+        (the default) ignores ``prior_conditions`` entirely.
+        """
+
         if layer is None or layer.typ != "OAF" or not layer.collection or not layer.url:
             if layer is not None:
                 logger.info(
@@ -194,7 +216,12 @@ class FilterAgent:
 
         api_url = layer.url.rstrip("/")
         queryables = self.queryables_cache.get(api_url, layer.collection)
-        conditions = self._extract_conditions(query, queryables) if queryables else []
+        new_conditions = self._extract_conditions(query, queryables) if queryables else []
+        conditions = (
+            self._merge_conditions(prior_conditions, new_conditions)
+            if mode == "refine" and prior_conditions
+            else new_conditions
+        )
         attribute_clauses = [
             clause for clause in (_condition_to_cql2(condition) for condition in conditions) if clause
         ]
@@ -232,7 +259,21 @@ class FilterAgent:
             features={"type": "FeatureCollection", "features": features},
             number_matched=data.get("numberMatched"),
             label=location.name if location else None,
+            area_kind=location.kind if location else None,
+            conditions=conditions,
         )
+
+    @staticmethod
+    def _merge_conditions(
+        prior: list[FilterCondition], new: list[FilterCondition]
+    ) -> list[FilterCondition]:
+        """Section 10.6: a condition on a field the new query also
+        constrains is replaced by the new one; conditions on other
+        fields are kept as-is (ANDed)."""
+
+        new_fields = {condition.field for condition in new}
+        kept = [condition for condition in prior if condition.field not in new_fields]
+        return kept + new
 
     def _extract_conditions(self, query: str, queryables: dict) -> list[FilterCondition]:
         fields = "\n".join(
@@ -271,7 +312,7 @@ class FilterAgent:
             # Only accept fields the layer actually has and operators we
             # know how to compile - an LLM hallucinating either is a
             # dropped condition, not a malformed query sent upstream.
-            if field not in queryables or operator not in _VALID_OPERATORS:
+            if field not in queryables or operator not in FILTER_OPERATORS:
                 continue
             conditions.append(FilterCondition(field=field, operator=operator, value=item.get("value")))
 

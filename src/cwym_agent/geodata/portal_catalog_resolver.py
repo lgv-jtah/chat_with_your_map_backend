@@ -1,6 +1,5 @@
-"""Scopes ``LayerSearchService``'s search space to what a specific
-Masterportal instance actually exposes (``cwym-agent-architecture.md``
-Section 8).
+"""Scopes the pipeline to what a specific Masterportal instance actually
+exposes (``cmym-agent-architecture.md`` Section 8).
 
 ``RealDataServices.resolve_layer`` searches Hamburg's full ~6,500-layer
 catalog unscoped by default - correct for finding *any* Hamburg layer,
@@ -11,40 +10,37 @@ resolving to a layer outside that subset produces an ``ACTIVATE_LAYER``
 ``changeVisibility`` needs the layer already present in that portal's
 own ``config.json``/``layerConfig``, and throws otherwise).
 
-**Design (deviates from the architecture doc in one respect, noted
-below):** the frontend forwards its own already-resolved
-``config.json`` URL with each query (``portal_context.config_json_url``)
-- it already resolved this to boot itself, matching Section 8's stated
-principle that the backend never re-derives portal URLs on its own.
-``PortalCatalogResolver`` fetches that ``config.json`` and extracts
-every layer id declared in ``layerConfig.baselayer``/``subjectlayer``
-- the portal's own declaration of which layers it exposes.
-``LayerSearchService.search()`` then filters its existing single,
-already-embedded Hamburg-wide index down to just those ids (a Haystack
-document-store ``filters`` query), rather than building a second,
-portal-scoped embedding index as the doc's literal proposal describes.
-This reuses the one expensive warm-up (fetch + embed ~6,500 documents)
-across every portal instead of repeating it per portal, and since no
-embedding step is needed for a ``config.json`` this small, it also
-makes onboarding a newly-seen portal cheaper than the doc's own design
-at the point that mattered most: cold-start latency for that portal's
-first query. ``services_json_url`` is accepted in the request schema
-(the frontend already resolves it) but unused for now - this
-filter-based design only needs the id set from ``config.json``, not
-``services.json``'s fuller per-layer metadata; a future portal needing
-metadata not already present in the global Hamburg index would be the
-reason to start using it.
+**Design.** The frontend forwards its own already-resolved
+``config.json``/``services.json`` URLs with each query
+(``portal_context``) - it already resolved these to boot itself,
+matching Section 8's stated principle that the backend never re-derives
+portal URLs on its own. ``PortalCatalogResolver`` fetches both,
+cross-references ``config.json``'s declared layer ids (from
+``layerConfig.baselayer``/``subjectlayer``) against ``services.json``'s
+per-layer metadata (``id``/``typ``/``name``/``url``/``collection``,
+confirmed live against the real ``services-internet.json`` shape), and
+returns a ``LayerCatalog``: not just the id *set* (as an earlier,
+simpler version of this module did) but per-layer metadata, because
+``FilterAgent`` needs to target an already-active layer id (a
+conversation-context follow-up, Section 10) without a fresh
+``layer_resolver`` vector search to supply that metadata.
 
-Caching is keyed by ``config_json_url`` and refreshed on a plain TTL
-(``GeodataSettings.portal_catalog_cache_ttl``) rather than the doc's
-ETag/conditional-GET refresh - config.json changes are rare, and a
-TTL-only cache is enough for the one real deployment that exists today.
-A fetch/parse failure logs a warning and returns ``None`` (unscoped
-fallback) rather than failing the whole query - scoping is a
+Concurrent cold-start requests for the same ``(config_json_url,
+services_json_url)`` pair share one build via a per-key
+``asyncio.Lock`` (single-flight) - cheap to add now that this fetch
+does two round trips and some parsing instead of one, and matches the
+architecture doc's design. Refreshed via a TTL-gated conditional GET
+(``ETag``/``If-None-Match``, ``Last-Modified``/``If-Modified-Since``)
+per resource URL, reusing the previously parsed body on ``304 Not
+Modified`` rather than re-parsing on every TTL expiry.
+
+A fetch/parse failure (either URL) logs a warning and returns ``None``
+(unscoped fallback) rather than failing the whole query - scoping is a
 correctness nicety for a specific portal, not something that should
-turn a temporary config.json outage into a hard error for every query.
+turn a temporary config/services outage into a hard error for every
+query.
 
-**SSRF hardening.** ``config_json_url`` is client-supplied and fetched
+**SSRF hardening.** Both URLs are client-supplied and fetched
 server-side, and ``/api/query`` has no origin restriction
 (``allow_origins=["*"]``) - so any web page could otherwise point this
 at an internal address. Before fetching, ``_check_url`` rejects
@@ -52,8 +48,13 @@ non-http(s) schemes, URLs carrying credentials, and any IP-literal host
 that's link-local/private/reserved/multicast (covers the common
 concrete targets, e.g. cloud metadata's ``169.254.169.254``) - plus, if
 ``GeodataSettings.portal_catalog_allowed_hosts`` is configured, any
-host outside that allowlist. The response is also capped at
-``portal_catalog_max_response_bytes``. A rejected URL is treated the
+host outside that allowlist. Applied independently to *both* URLs.
+Redirects are never followed (``follow_redirects=False``): a URL that
+passes the check but redirects to a disallowed target must not be
+silently fetched anyway. Each response is capped at
+``portal_catalog_max_response_bytes``, checked against both the
+``Content-Length`` header (fails fast) and the actual streamed byte
+count (catches a missing/lying header). A rejected URL is treated the
 same as any other fetch failure: logged and falls back to unscoped
 search, not a raised exception. Deliberately does **not** resolve DNS
 to catch a domain name that resolves to a private IP (rebinding) -
@@ -66,14 +67,14 @@ documented scope limit here, not an oversight.
 ``True``) - deliberately, not an oversight, same reasoning as the
 wide-open CORS above: this project's only real deployment today runs
 the frontend and backend on the same host, so the frontend's own
-resolved ``config.json`` URL (built from ``window.location``,
-mirroring how it boots itself) *is* loopback in that case, and
-rejecting it would silently disable scoping for the one setup that
-actually exists - confirmed live: the frontend's own dev server
-(``webpack-dev-server``, ``localhost``) and this backend running
-locally reproduces exactly that. Set this to ``False`` once frontend
-and backend are deployed on genuinely separate hosts and loopback is
-no longer a legitimate target, alongside tightening CORS.
+resolved URLs (built from ``window.location``, mirroring how it boots
+itself) *are* loopback in that case, and rejecting them would silently
+disable scoping for the one setup that actually exists - confirmed
+live: the frontend's own dev server (``webpack-dev-server``,
+``localhost``) and this backend running locally reproduces exactly
+that. Set this to ``False`` once frontend and backend are deployed on
+genuinely separate hosts and loopback is no longer a legitimate target,
+alongside tightening CORS.
 
 **TLS verification is skipped for loopback fetches only.**
 ``webpack-dev-server``'s ``devServer.https`` is hardcoded ``true`` in
@@ -83,7 +84,7 @@ self-signed-cert loopback URL with the default (verifying) client
 raises ``SSLCertVerificationError``, caught by the same broad
 ``except`` as any other fetch failure and silently falling back to
 unscoped search, with nothing surfaced to the frontend at all. A
-second, separate httpx client with ``verify=False`` is used
+second, separate ``httpx.AsyncClient`` with ``verify=False`` is used
 specifically when the target is loopback *and* loopback is allowed -
 an attacker who can already reach loopback services on this machine
 has bigger problems than a spoofed certificate there, so this doesn't
@@ -93,21 +94,26 @@ verification, regardless of this setting - this is not a blanket
 "skip TLS" switch.
 """
 
+import hashlib
 import ipaddress
+import json
 import logging
 import time
+from asyncio import Lock
+from dataclasses import dataclass, field
 from urllib.parse import urlsplit
 
 import httpx
 
 from cwym_agent.geodata.settings import GeodataSettings
+from cwym_agent.geodata.types import LayerMatch
 
 logger = logging.getLogger(__name__)
 
 
 class _URLRejected(Exception):
-    """Internal only - caught by get_allowed_layer_ids() and treated like
-    any other fetch failure (fail open to unscoped search)."""
+    """Internal only - caught by get_or_build() and treated like any
+    other fetch failure (fail open to unscoped search)."""
 
 
 _LOOPBACK_HOSTNAMES = frozenset({"localhost"})
@@ -173,67 +179,177 @@ def _extract_layer_ids(config_json: dict) -> set[str]:
     return ids
 
 
+def _build_layer_catalog(config_json: dict, services_json) -> "LayerCatalog":
+    """Cross-references config.json's exposed ids against services.json's
+    per-layer metadata - an id declared in config.json but missing from
+    services.json (unexpected, but not impossible for a hand-edited
+    portal) is silently dropped rather than half-populated."""
+
+    exposed_ids = _extract_layer_ids(config_json)
+    if not isinstance(services_json, list):
+        raise _URLRejected("services.json is not a list")
+
+    by_id = {str(entry["id"]): entry for entry in services_json if isinstance(entry, dict) and "id" in entry}
+
+    layers: dict[str, LayerMatch] = {}
+    for layer_id in exposed_ids:
+        entry = by_id.get(layer_id)
+        if entry is None:
+            continue
+        layers[layer_id] = LayerMatch(
+            name=entry.get("name") or layer_id,
+            layer_id=layer_id,
+            confidence=1.0,
+            typ=entry.get("typ"),
+            url=entry.get("url"),
+            collection=entry.get("collection"),
+        )
+    return LayerCatalog(layers)
+
+
+@dataclass(frozen=True)
+class LayerCatalog:
+    """The layer ids + metadata a Masterportal instance actually
+    exposes. Consumed by ``LayerSearchService`` (scoping search via the
+    id set), ``FilterAgent`` (per-layer metadata for an already-active
+    layer id), and the planner context block / NLG (layer names)."""
+
+    _layers: dict[str, LayerMatch] = field(default_factory=dict)
+
+    def has(self, layer_id: str) -> bool:
+        return layer_id in self._layers
+
+    def get(self, layer_id: str) -> LayerMatch | None:
+        return self._layers.get(layer_id)
+
+    def name(self, layer_id: str) -> str:
+        match = self._layers.get(layer_id)
+        return match.name if match else layer_id
+
+    def names(self) -> dict[str, str]:
+        return {layer_id: match.name for layer_id, match in self._layers.items()}
+
+
+@dataclass
+class _CachedResource:
+    """A previously-fetched config.json/services.json body, kept so a
+    304 response on refresh can reuse it instead of re-parsing."""
+
+    data: object
+    etag: str | None
+    last_modified: str | None
+
+
 class PortalCatalogResolver:
-    """Resolves the set of layer ids a Masterportal instance exposes."""
+    """Resolves the layer catalog a Masterportal instance exposes."""
 
     def __init__(
         self,
         settings: GeodataSettings | None = None,
-        http_client: httpx.Client | None = None,
-        loopback_http_client: httpx.Client | None = None,
+        http_client: httpx.AsyncClient | None = None,
+        loopback_http_client: httpx.AsyncClient | None = None,
     ):
         self.settings = settings or GeodataSettings()
-        self._client = http_client or httpx.Client(timeout=self.settings.timeout)
+        self._client = http_client or httpx.AsyncClient(
+            follow_redirects=False, timeout=self.settings.timeout
+        )
         # A separate, non-certificate-verifying client used only for
         # loopback targets (see the module docstring's "TLS verification"
         # section) - defaults to the same client as an explicitly-passed
         # http_client (e.g. a test's MockTransport, where verify is moot)
-        # so existing single-client callers don't need to change.
-        self._loopback_client = loopback_http_client or http_client or httpx.Client(
-            timeout=self.settings.timeout, verify=False
+        # so single-client callers don't need to pass both.
+        self._loopback_client = loopback_http_client or http_client or httpx.AsyncClient(
+            follow_redirects=False, timeout=self.settings.timeout, verify=False
         )
-        self._cache: dict[str, tuple[float, set[str]]] = {}
+        self._resources: dict[str, _CachedResource] = {}
+        self._catalogs: dict[str, tuple[float, LayerCatalog]] = {}
+        self._locks: dict[str, Lock] = {}
 
-    def get_allowed_layer_ids(self, config_json_url: str | None) -> set[str] | None:
-        """Return the layer ids ``config_json_url``'s portal exposes.
+    async def get_or_build(
+        self, config_json_url: str | None, services_json_url: str | None
+    ) -> LayerCatalog | None:
+        """Return the layer catalog ``config_json_url``/``services_json_url``'s
+        portal exposes.
 
         Returns ``None`` - meaning "don't scope, search unscoped" - when
-        no URL was given, or when fetching/parsing it failed.
+        either URL is missing, or when fetching/parsing either one
+        failed.
         """
 
-        if not config_json_url:
+        if not config_json_url or not services_json_url:
             return None
 
-        cached = self._cache.get(config_json_url)
+        key = hashlib.sha256(f"{config_json_url}\n{services_json_url}".encode()).hexdigest()
+
+        cached = self._catalogs.get(key)
         if cached is not None and time.monotonic() - cached[0] < self.settings.portal_catalog_cache_ttl:
             return cached[1]
 
-        try:
-            is_loopback = _check_url(
-                config_json_url,
-                self.settings.portal_catalog_allowed_hosts,
-                self.settings.portal_catalog_allow_loopback,
-            )
-            client = self._loopback_client if is_loopback else self._client
+        # Single-flight: concurrent cold-start requests for the same
+        # portal build once. Safe without extra locking around the
+        # dict access itself - asyncio is cooperative/single-threaded,
+        # so no other coroutine can interleave between this lookup and
+        # the setdefault() below.
+        lock = self._locks.setdefault(key, Lock())
+        async with lock:
+            cached = self._catalogs.get(key)
+            if cached is not None and time.monotonic() - cached[0] < self.settings.portal_catalog_cache_ttl:
+                return cached[1]
 
-            response = client.get(config_json_url)
+            try:
+                config_json = await self._fetch_resource(config_json_url)
+                services_json = await self._fetch_resource(services_json_url)
+                catalog = _build_layer_catalog(config_json, services_json)
+            except (httpx.HTTPError, ValueError, TypeError, _URLRejected) as exc:
+                logger.warning(
+                    "Failed to fetch/parse portal catalog (config=%s, services=%s): %s; "
+                    "falling back to unscoped layer search for this query",
+                    config_json_url,
+                    services_json_url,
+                    exc,
+                )
+                return None
+
+            self._catalogs[key] = (time.monotonic(), catalog)
+            return catalog
+
+    async def _fetch_resource(self, url: str):
+        is_loopback = _check_url(
+            url, self.settings.portal_catalog_allowed_hosts, self.settings.portal_catalog_allow_loopback
+        )
+        client = self._loopback_client if is_loopback else self._client
+
+        headers = {}
+        cached = self._resources.get(url)
+        if cached is not None:
+            if cached.etag:
+                headers["If-None-Match"] = cached.etag
+            if cached.last_modified:
+                headers["If-Modified-Since"] = cached.last_modified
+
+        async with client.stream("GET", url, headers=headers) as response:
+            if response.status_code == 304 and cached is not None:
+                return cached.data
+
             response.raise_for_status()
 
             content_length = response.headers.get("content-length")
             if content_length and int(content_length) > self.settings.portal_catalog_max_response_bytes:
                 raise _URLRejected(f"response too large: {content_length} bytes")
-            if len(response.content) > self.settings.portal_catalog_max_response_bytes:
-                raise _URLRejected(f"response too large: {len(response.content)} bytes")
 
-            layer_ids = _extract_layer_ids(response.json())
-        except (httpx.HTTPError, ValueError, _URLRejected) as exc:
-            logger.warning(
-                "Failed to fetch/parse config.json at %s (%s); falling back to "
-                "unscoped layer search for this query",
-                config_json_url,
-                exc,
-            )
-            return None
+            buf = bytearray()
+            async for chunk in response.aiter_bytes():
+                buf += chunk
+                if len(buf) > self.settings.portal_catalog_max_response_bytes:
+                    raise _URLRejected(
+                        f"response too large: over {self.settings.portal_catalog_max_response_bytes} bytes"
+                    )
 
-        self._cache[config_json_url] = (time.monotonic(), layer_ids)
-        return layer_ids
+            data = json.loads(buf)
+
+        self._resources[url] = _CachedResource(
+            data=data,
+            etag=response.headers.get("etag"),
+            last_modified=response.headers.get("last-modified"),
+        )
+        return data

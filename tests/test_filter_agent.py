@@ -11,6 +11,7 @@ import json
 import httpx
 
 from cwym_agent.geodata.filter_agent import (
+    FILTER_OPERATORS,
     FilterAgent,
     QueryablesCache,
     _boundary_to_wkt,
@@ -40,6 +41,11 @@ _WANDSBEK_BOUNDARY = {
     "type": "Polygon",
     "coordinates": [[[10.0, 53.5], [10.1, 53.5], [10.1, 53.6], [10.0, 53.6], [10.0, 53.5]]],
 }
+
+
+class TestFilterOperators:
+    def test_exported_for_build_context_reuse(self):
+        assert FILTER_OPERATORS == {"eq", "ne", "lt", "lte", "gt", "gte", "contains"}
 
 
 class TestConditionToCql2:
@@ -271,6 +277,94 @@ class TestFilterAgentFilter:
         agent = FilterAgent(llm=_mock_llm("nicht JSON"), http_client=client)
 
         assert agent.filter("query", _OAF_LAYER) is None
+
+    def test_replace_mode_ignores_prior_conditions(self):
+        """Default mode - a follow-up naming an active layer with no
+        'refine' semantics starts from a clean slate."""
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            if "queryables" in str(request.url):
+                return httpx.Response(200, json=_QUERYABLES)
+            return httpx.Response(200, json={"type": "FeatureCollection", "numberMatched": 0, "features": []})
+
+        client = httpx.Client(transport=httpx.MockTransport(handler))
+        reply = json.dumps([{"field": "betten", "operator": "gt", "value": 100}])
+        agent = FilterAgent(llm=_mock_llm(reply), http_client=client)
+        prior = [FilterCondition(field="name", operator="contains", value="Klinik")]
+
+        result = agent.filter("mehr als 100 Betten", _OAF_LAYER, mode="replace", prior_conditions=prior)
+
+        assert result is not None
+        assert result.conditions == [FilterCondition(field="betten", operator="gt", value=100)]
+
+    def test_refine_mode_ands_conditions_on_different_fields(self):
+        def handler(request: httpx.Request) -> httpx.Response:
+            if "queryables" in str(request.url):
+                return httpx.Response(200, json=_QUERYABLES)
+            return httpx.Response(200, json={"type": "FeatureCollection", "numberMatched": 0, "features": []})
+
+        client = httpx.Client(transport=httpx.MockTransport(handler))
+        reply = json.dumps([{"field": "betten", "operator": "gt", "value": 100}])
+        agent = FilterAgent(llm=_mock_llm(reply), http_client=client)
+        prior = [FilterCondition(field="name", operator="contains", value="Klinik")]
+
+        result = agent.filter("mehr als 100 Betten", _OAF_LAYER, mode="refine", prior_conditions=prior)
+
+        assert result is not None
+        assert len(result.conditions) == 2
+        assert FilterCondition(field="name", operator="contains", value="Klinik") in result.conditions
+        assert FilterCondition(field="betten", operator="gt", value=100) in result.conditions
+
+    def test_refine_mode_replaces_condition_on_same_field(self):
+        """'nur Gymnasien' after 'nur Grundschulen' means Gymnasien, not
+        an empty intersection - a new condition on a field that already
+        has one replaces it rather than ANDing (Section 10.6)."""
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            if "queryables" in str(request.url):
+                return httpx.Response(200, json=_QUERYABLES)
+            return httpx.Response(200, json={"type": "FeatureCollection", "numberMatched": 0, "features": []})
+
+        client = httpx.Client(transport=httpx.MockTransport(handler))
+        reply = json.dumps([{"field": "name", "operator": "eq", "value": "Gymnasium"}])
+        agent = FilterAgent(llm=_mock_llm(reply), http_client=client)
+        prior = [FilterCondition(field="name", operator="eq", value="Grundschule")]
+
+        result = agent.filter("Gymnasien", _OAF_LAYER, mode="refine", prior_conditions=prior)
+
+        assert result is not None
+        assert result.conditions == [FilterCondition(field="name", operator="eq", value="Gymnasium")]
+
+    def test_refine_mode_with_no_prior_conditions_behaves_like_replace(self):
+        def handler(request: httpx.Request) -> httpx.Response:
+            if "queryables" in str(request.url):
+                return httpx.Response(200, json=_QUERYABLES)
+            return httpx.Response(200, json={"type": "FeatureCollection", "numberMatched": 0, "features": []})
+
+        client = httpx.Client(transport=httpx.MockTransport(handler))
+        reply = json.dumps([{"field": "betten", "operator": "gt", "value": 100}])
+        agent = FilterAgent(llm=_mock_llm(reply), http_client=client)
+
+        result = agent.filter("mehr als 100 Betten", _OAF_LAYER, mode="refine", prior_conditions=None)
+
+        assert result is not None
+        assert result.conditions == [FilterCondition(field="betten", operator="gt", value=100)]
+
+    def test_result_carries_area_kind_alongside_label(self):
+        def handler(request: httpx.Request) -> httpx.Response:
+            if "queryables" in str(request.url):
+                return httpx.Response(200, json=_QUERYABLES)
+            return httpx.Response(200, json={"type": "FeatureCollection", "numberMatched": 0, "features": []})
+
+        client = httpx.Client(transport=httpx.MockTransport(handler))
+        agent = FilterAgent(llm=_mock_llm("[]"), http_client=client)
+        location = LocationMatch("Wandsbek", 53.6, 10.1, 0.9, boundary=_WANDSBEK_BOUNDARY, kind="bezirk")
+
+        result = agent.filter("Krankenhäuser in Wandsbek", _OAF_LAYER, location)
+
+        assert result is not None
+        assert result.label == "Wandsbek"
+        assert result.area_kind == "bezirk"
 
     def test_items_query_failure_returns_none(self):
         def handler(request: httpx.Request) -> httpx.Response:

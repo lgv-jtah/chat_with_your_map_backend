@@ -6,7 +6,7 @@ be swapped in behind the same ``AgentExecutorComponent`` without it
 needing to know which implementation is in use.
 """
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 
 @dataclass
@@ -93,3 +93,14 @@ class FilterResult:
     optional per spec, so None here means "unknown", distinct from
     "matched exactly what was returned"."""
     label: str | None = None
+    area_kind: str | None = None
+    """The spatially-filtering location's `kind` ("bezirk"/"stadtteil"/
+    "address"), when one was used - together with `label`, echoed back
+    to the frontend as ApplyFilterPayload.filterSpec.area so a
+    follow-up refinement can re-resolve the same area by name+kind
+    (cmym-agent-architecture.md Section 10.6)."""
+    conditions: list[FilterCondition] = field(default_factory=list)
+    """The validated attribute conditions actually compiled into the
+    query (post-merge on a refine turn) - echoed back as
+    ApplyFilterPayload.filterSpec.conditions so a later refinement has
+    something to merge against."""
