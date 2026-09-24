@@ -116,6 +116,9 @@ Qwen3Settings` and `cwym_agent.geodata.settings.GeodataSettings`):
 | `CWYM_ADDRESS_RESULT_SIZE` | `20` | Candidates fetched per address query (needs enough headroom to find district/county-level hits alongside street matches) |
 | `CWYM_GEODATA_TIMEOUT` | `15` | Request timeout (seconds) for both geodata endpoints |
 | `CWYM_PORTAL_CATALOG_CACHE_TTL` | `600` | Seconds `PortalCatalogResolver` trusts a fetched `config.json` before re-fetching |
+| `CWYM_PORTAL_CATALOG_ALLOWED_HOSTS` | *(empty)* | Comma-separated hostname allowlist for `config_json_url` (SSRF hardening) - empty means only the baseline scheme/private-IP checks apply |
+| `CWYM_PORTAL_CATALOG_MAX_RESPONSE_BYTES` | `5000000` | Max response size accepted when fetching a `config_json_url` |
+| `CWYM_PORTAL_CATALOG_ALLOW_LOOPBACK` | `true` | Whether `localhost`/loopback is an acceptable `config_json_url` host - defaults on since frontend and backend currently run on the same host; set to `false` once they're on separate hosts |
 | `CWYM_FILTER_QUERYABLES_CACHE_TTL` | `3600` | Seconds `FilterAgent` trusts a fetched OGC API Features `/queryables` schema before re-fetching |
 | `CWYM_FILTER_RESULT_LIMIT` | `500` | Max features fetched per `FilterAgent` query |
 | `CWYM_FILTER_LLM_MAX_TOKENS` | `2048` | Token budget for `FilterAgent`'s condition-extraction LLM call |
