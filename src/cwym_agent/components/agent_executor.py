@@ -25,6 +25,28 @@ def _serializable(value):
     return value
 
 
+def _tool_call_result_view(agent_name: str, serialized_result):
+    """The value sent as filter_agent's own TOOL_CALL_RESULT.
+
+    filter_agent's full result (including the complete GeoJSON
+    FeatureCollection) is also what CommandBuilderComponent pushes as
+    the APPLY_FILTER MapCommand right after - sending the whole
+    FeatureCollection twice on the wire is pure duplication for large
+    result sets, so this view carries a feature count instead. Only
+    affects what's emitted on the bridge; execution_log/results_by_agent
+    keep the untrimmed result, since ResultAggregatorComponent/
+    TextResponseComponent/CommandBuilderComponent still need it.
+    """
+
+    if agent_name == "filter_agent" and isinstance(serialized_result, dict) and "features" in serialized_result:
+        features = serialized_result["features"] or {}
+        return {
+            **{key: value for key, value in serialized_result.items() if key != "features"},
+            "feature_count": len(features.get("features", [])),
+        }
+    return serialized_result
+
+
 @component
 class AgentExecutorComponent:
     def __init__(self, data_services: Any | None = None):
@@ -55,7 +77,9 @@ class AgentExecutorComponent:
             results_by_agent[agent_name] = result
 
             if bridge:
-                bridge.tool_call(agent_name, args, _serializable(result))
+                bridge.tool_call(
+                    agent_name, args, _tool_call_result_view(agent_name, _serializable(result))
+                )
 
             execution_log.append({"agent_name": agent_name, "result": result})
 

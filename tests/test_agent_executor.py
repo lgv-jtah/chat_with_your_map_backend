@@ -38,6 +38,14 @@ def _plan(*agent_names: str) -> dict:
     return {"steps": [{"agent_name": name, "args": {"query": "test"}} for name in agent_names]}
 
 
+class FakeBridge:
+    def __init__(self):
+        self.tool_calls: list = []
+
+    def tool_call(self, name, args, result):
+        self.tool_calls.append((name, args, result))
+
+
 class TestAllowedLayerIdsDispatch:
     def test_forwarded_to_layer_resolver_only(self):
         data_services = FakeDataServices()
@@ -100,3 +108,51 @@ class TestFilterAgentDispatch:
         [(_, layer, location)] = data_services.apply_filter_calls
         assert layer == LayerMatch("Some Layer", "1", 0.9)
         assert location is None
+
+
+class TestFilterAgentToolCallResultView:
+    def test_bridge_event_carries_feature_count_not_features(self):
+        """filter_agent's own TOOL_CALL_RESULT must not repeat the full
+        FeatureCollection APPLY_FILTER already carries (CommandBuilderComponent
+        builds that from execution_log separately) - the bridge-emitted
+        view gets a feature_count instead."""
+
+        class DataServicesWithFeatures(FakeDataServices):
+            def apply_filter(self, query, layer, location=None):
+                return FilterResult(
+                    layer_id="1",
+                    features={
+                        "type": "FeatureCollection",
+                        "features": [{"type": "Feature", "properties": {}} for _ in range(3)],
+                    },
+                    number_matched=3,
+                )
+
+        data_services = DataServicesWithFeatures()
+        bridge = FakeBridge()
+        component = AgentExecutorComponent(data_services=data_services)
+
+        result = component.run(_plan("filter_agent"), bridge=bridge)
+
+        [(name, _args, emitted)] = bridge.tool_calls
+        assert name == "filter_agent"
+        assert "features" not in emitted
+        assert emitted["feature_count"] == 3
+        assert emitted["number_matched"] == 3
+
+        # execution_log keeps the untrimmed result - ResultAggregatorComponent/
+        # CommandBuilderComponent need the real features to build APPLY_FILTER.
+        logged_result = result["execution_log"][0]["result"]
+        assert len(logged_result.features["features"]) == 3
+
+    def test_other_sub_agents_unaffected(self):
+        data_services = FakeDataServices()
+        bridge = FakeBridge()
+        component = AgentExecutorComponent(data_services=data_services)
+
+        component.run(_plan("layer_resolver"), bridge=bridge)
+
+        [(name, _args, emitted)] = bridge.tool_calls
+        assert name == "layer_resolver"
+        assert emitted == {"name": "Some Layer", "layer_id": "1", "confidence": 0.9, "description": "",
+                            "typ": None, "url": None, "collection": None}
