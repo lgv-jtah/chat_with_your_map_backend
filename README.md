@@ -101,7 +101,7 @@ Qwen3Settings` and `cwym_agent.geodata.settings.GeodataSettings`):
 | `CWYM_QWEN3_MODEL` | `Qwen/Qwen3.8-27B` | Model name to request |
 | `CWYM_QWEN3_API_KEY` | `EMPTY` | API key (the server tested against requires no real auth) |
 | `CWYM_QWEN3_TIMEOUT` | `60` | Request timeout (seconds) |
-| `CWYM_QWEN3_MAX_TOKENS_PLAN` | `1024` | Max tokens for the planning call (covers the reasoning trace + tool calls) |
+| `CWYM_QWEN3_MAX_TOKENS_PLAN` | `2048` | Max tokens for the planning call (covers the reasoning trace + tool calls) - the conversation-context block + planning rules give Qwen3 more to reason through than a bare query, so this needs more headroom than it used to |
 | `CWYM_QWEN3_MAX_TOKENS_GENERATE` | `512` | Max tokens for the final reply generation call |
 | `CWYM_LAYER_SEARCH_URL` | `https://geodienste.hamburg.de/layers/_search` | Hamburg's public layer catalog Elasticsearch endpoint |
 | `CWYM_LAYER_EMBED_MODEL` | `sentence-transformers/all-MiniLM-L6-v2` | Embedding model for layer search |
