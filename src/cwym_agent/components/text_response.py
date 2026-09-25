@@ -62,11 +62,11 @@ class TextResponseComponent:
                 full_text.append(chunk.content)
                 bridge.emit(TextMessageContentEvent(message_id=message_id, delta=chunk.content))
 
-            self.llm.generate(prompt, streaming_callback=on_token)
+            self.llm.generate(prompt, streaming_callback=on_token, label="text_response")
             bridge.emit(TextMessageEndEvent(message_id=message_id))
             response_text = "".join(full_text)
         else:
-            response_text = self.llm.generate(prompt)
+            response_text = self.llm.generate(prompt, label="text_response")
 
         return {"response_text": response_text}
 

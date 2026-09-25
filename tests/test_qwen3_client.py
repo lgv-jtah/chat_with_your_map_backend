@@ -27,19 +27,42 @@ def _settings() -> Qwen3Settings:
     return Qwen3Settings(base_url=_BASE_URL, model=_MODEL, api_key="EMPTY")
 
 
-def _sse(*deltas: dict) -> str:
-    """Build an SSE body from a sequence of ``choices[0].delta`` dicts."""
+def _sse(*deltas: dict, finish_reason: str | None = None, usage: dict | None = None) -> str:
+    """Build an SSE body from a sequence of ``choices[0].delta`` dicts.
+
+    ``finish_reason`` is attached to the last delta chunk (matching how
+    a real OpenAI-compatible stream ends a choice). ``usage``, if given,
+    is appended as its own trailing chunk with empty ``choices`` -
+    matching vLLM/OpenAI's ``stream_options={"include_usage": True}``
+    behavior, which this client always requests now.
+    """
 
     lines = []
-    for delta in deltas:
+    for index, delta in enumerate(deltas):
         chunk = {
             "id": "chatcmpl-test",
             "object": "chat.completion.chunk",
             "created": 0,
             "model": _MODEL,
-            "choices": [{"index": 0, "delta": delta, "finish_reason": None}],
+            "choices": [
+                {
+                    "index": 0,
+                    "delta": delta,
+                    "finish_reason": finish_reason if index == len(deltas) - 1 else None,
+                }
+            ],
         }
         lines.append(f"data: {json.dumps(chunk)}\n\n")
+    if usage is not None:
+        usage_chunk = {
+            "id": "chatcmpl-test",
+            "object": "chat.completion.chunk",
+            "created": 0,
+            "model": _MODEL,
+            "choices": [],
+            "usage": usage,
+        }
+        lines.append(f"data: {json.dumps(usage_chunk)}\n\n")
     lines.append("data: [DONE]\n\n")
     return "".join(lines)
 
@@ -163,3 +186,72 @@ class TestGenerate:
 
         assert result == "Hier sind die Fahrradstationen."
         assert content_chunks == ["Hier ", "sind ", "die Fahrradstationen."]
+
+
+class TestUsageLogging:
+    """Dev-facing token usage logging (added after three separate live
+    truncation bugs this session where a call silently ran out of
+    completion tokens with nothing in the logs pointing at why)."""
+
+    def test_plan_logs_usage_at_info_on_clean_finish(self, caplog):
+        body = _sse(
+            _tool_call_delta(0, "call_1", "location_extractor", '{"query": "Altona"}'),
+            finish_reason="tool_calls",
+            usage={"prompt_tokens": 100, "completion_tokens": 40, "total_tokens": 140},
+        )
+        client = _client_for(body)
+
+        with caplog.at_level("INFO", logger="cwym_agent.llm.qwen3_client"):
+            client.plan("Zeige Fahrradstationen in Altona")
+
+        [record] = [r for r in caplog.records if r.name == "cwym_agent.llm.qwen3_client"]
+        assert record.levelname == "INFO"
+        assert "plan" in record.message
+        assert "prompt=100" in record.message
+        assert "completion=40" in record.message
+        assert "finish_reason=tool_calls" in record.message
+
+    def test_generate_logs_warning_when_truncated(self, caplog):
+        body = _sse(
+            {"content": "Ich zeige dir"},
+            finish_reason="length",
+            usage={"prompt_tokens": 300, "completion_tokens": 512, "total_tokens": 812},
+        )
+        client = _client_for(body)
+
+        with caplog.at_level("INFO", logger="cwym_agent.llm.qwen3_client"):
+            client.generate("Formuliere eine Antwort.", max_tokens=512, label="text_response")
+
+        [record] = [r for r in caplog.records if r.name == "cwym_agent.llm.qwen3_client"]
+        assert record.levelname == "WARNING"
+        assert "text_response" in record.message
+        assert "TRUNCATED" in record.message
+        assert "completion=512/512" in record.message
+
+    def test_generate_uses_the_given_label(self, caplog):
+        body = _sse(
+            {"content": "Gymnasium"},
+            finish_reason="stop",
+            usage={"prompt_tokens": 50, "completion_tokens": 5, "total_tokens": 55},
+        )
+        client = _client_for(body)
+
+        with caplog.at_level("INFO", logger="cwym_agent.llm.qwen3_client"):
+            client.generate("Extrahiere Bedingungen.", label="filter_condition_extraction")
+
+        [record] = [r for r in caplog.records if r.name == "cwym_agent.llm.qwen3_client"]
+        assert "filter_condition_extraction" in record.message
+
+    def test_missing_usage_falls_back_gracefully(self, caplog):
+        """A server without stream_options support (or an older proxy)
+        simply never sends a usage chunk - must not crash."""
+
+        body = _sse({"content": "Hallo"}, finish_reason="stop", usage=None)
+        client = _client_for(body)
+
+        with caplog.at_level("INFO", logger="cwym_agent.llm.qwen3_client"):
+            result = client.generate("Formuliere eine Antwort.")
+
+        assert result == "Hallo"
+        [record] = [r for r in caplog.records if r.name == "cwym_agent.llm.qwen3_client"]
+        assert "no usage reported" in record.message

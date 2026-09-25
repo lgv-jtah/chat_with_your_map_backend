@@ -123,7 +123,7 @@ class TestQueryablesCache:
 
 def _mock_llm(reply: str):
     class _FakeLlm:
-        def generate(self, prompt: str, max_tokens=None) -> str:
+        def generate(self, prompt: str, max_tokens=None, label="generate") -> str:
             return reply
 
     return _FakeLlm()

@@ -216,7 +216,9 @@ class RealDataServices:
         prompt = _QUERY_EXPANSION_PROMPT_TEMPLATE.format(query=query)
 
         try:
-            reply = self.llm.generate(prompt, max_tokens=self.settings.layer_llm_max_tokens)
+            reply = self.llm.generate(
+                prompt, max_tokens=self.settings.layer_llm_max_tokens, label="layer_query_expansion"
+            )
         except Exception:
             logger.warning("Layer query expansion LLM call failed", exc_info=True)
             return []
@@ -233,7 +235,9 @@ class RealDataServices:
         )
 
         try:
-            reply = self.llm.generate(prompt, max_tokens=self.settings.layer_llm_max_tokens)
+            reply = self.llm.generate(
+                prompt, max_tokens=self.settings.layer_llm_max_tokens, label="layer_disambiguation"
+            )
         except Exception:
             logger.warning(
                 "Layer disambiguation LLM call failed, falling back to top retrieved candidate",

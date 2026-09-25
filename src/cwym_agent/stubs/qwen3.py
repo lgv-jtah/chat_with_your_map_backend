@@ -66,8 +66,16 @@ class StubQwen3Generator:
         self,
         prompt: str,
         streaming_callback: StreamingCallback | None = None,
+        max_tokens: int | None = None,
+        label: str = "generate",
     ) -> str:
-        """Produce a canned German reply based on the built prompt."""
+        """Produce a canned German reply based on the built prompt.
+
+        ``max_tokens``/``label`` accepted (and ignored) only to match
+        the real ``Qwen3Client.generate()`` signature - this stub never
+        truncates or logs usage, so there's nothing for them to do
+        here.
+        """
 
         text = prompt
         _stream(text, streaming_callback)

@@ -284,7 +284,9 @@ class FilterAgent:
         prompt = _CONDITION_EXTRACTION_PROMPT_TEMPLATE.format(fields=fields, query=query)
 
         try:
-            reply = self.llm.generate(prompt, max_tokens=self.settings.filter_llm_max_tokens)
+            reply = self.llm.generate(
+                prompt, max_tokens=self.settings.filter_llm_max_tokens, label="filter_condition_extraction"
+            )
         except Exception:
             logger.warning("FilterAgent condition extraction LLM call failed", exc_info=True)
             return []
