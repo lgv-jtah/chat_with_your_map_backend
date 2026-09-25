@@ -64,6 +64,19 @@ class Qwen3Settings:
     max_tokens_plan: int = field(
         default_factory=lambda: _env_int("CWYM_QWEN3_MAX_TOKENS_PLAN", 4096)
     )
+    # Same failure mode as max_tokens_plan above, this time on the final
+    # reply: TextResponseComponent's prompt (context block + resolved
+    # facts) invites Qwen3 to reason before answering, same as any other
+    # call here, and 512 was tuned before that context was added. Live-
+    # reproduced from the user's real browser session (two separate
+    # turns showed TEXT_MESSAGE_START immediately followed by
+    # TEXT_MESSAGE_END with zero content deltas - the map could update
+    # correctly and the chat bubble still come back empty). Confirmed
+    # directly: 1 of 5 raw-stream trials of the same prompt hit
+    # finish_reason="length" with 0 content chars, while the other 4
+    # completed cleanly (finish_reason="stop") using under half the
+    # budget - reasoning length variance again, not a deliberate empty
+    # reply. Bumped to 2048 and re-verified before committing.
     max_tokens_generate: int = field(
-        default_factory=lambda: _env_int("CWYM_QWEN3_MAX_TOKENS_GENERATE", 512)
+        default_factory=lambda: _env_int("CWYM_QWEN3_MAX_TOKENS_GENERATE", 2048)
     )
