@@ -113,7 +113,7 @@ class TestBuildFilterCommands:
         filter_result = FilterResult(
             layer_id="27714", features=_FEATURES, number_matched=1, label="Wandsbek"
         )
-        aggregated = _aggregated("Filter", layer=_LAYER, locations=[_DISTRICT_LOCATION], filter_result=filter_result)
+        aggregated = _aggregated("Filter", layer=_LAYER, filter_result=filter_result)
 
         commands = builder._build_commands(aggregated)
 
@@ -123,6 +123,37 @@ class TestBuildFilterCommands:
         assert commands[0]["payload"]["label"] == "Wandsbek"
         assert commands[0]["payload"]["totalMatched"] == 1
         assert commands[0]["payload"]["truncated"] is False
+
+    def test_spatially_scoped_filter_also_zooms_to_the_location_extent(self):
+        """Found live: "Fahrradstationen in Wandsbek" pushed matched
+        features onto the map with no view change at all - the results
+        could land anywhere relative to whatever was already on screen."""
+
+        filter_result = FilterResult(
+            layer_id="27714", features=_FEATURES, number_matched=1, label="Wandsbek", area_kind="bezirk"
+        )
+        aggregated = _aggregated("Filter", layer=_LAYER, locations=[_DISTRICT_LOCATION], filter_result=filter_result)
+
+        commands = builder._build_commands(aggregated)
+
+        assert [cmd["type"] for cmd in commands] == ["APPLY_FILTER", "ZOOM_TO_EXTENT"]
+        assert tuple(commands[1]["payload"]["bbox"]) == _WANDSBEK_EXTENT
+
+    def test_filter_without_a_location_does_not_zoom(self):
+        filter_result = FilterResult(layer_id="27714", features=_FEATURES, number_matched=1)
+        aggregated = _aggregated("Filter", layer=_LAYER, filter_result=filter_result)
+
+        commands = builder._build_commands(aggregated)
+
+        assert [cmd["type"] for cmd in commands] == ["APPLY_FILTER"]
+
+    def test_filter_with_location_but_no_extent_does_not_zoom(self):
+        filter_result = FilterResult(layer_id="27714", features=_FEATURES, number_matched=1)
+        aggregated = _aggregated("Filter", layer=_LAYER, locations=[_STREET_LOCATION], filter_result=filter_result)
+
+        commands = builder._build_commands(aggregated)
+
+        assert [cmd["type"] for cmd in commands] == ["APPLY_FILTER"]
 
     def test_more_matched_than_shown_marks_truncated(self):
         filter_result = FilterResult(layer_id="27714", features=_FEATURES, number_matched=500)

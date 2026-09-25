@@ -14,6 +14,15 @@ features; that's now ``FilterAgent``'s job for a "Filter" turn, via
 real server-side OGC API Features CQL2 queries rather than client-side
 masking (see ``cwym-agent-architecture.md`` Section 9).
 
+A "Filter" turn's own build order is ``[DEACTIVATE_LAYER] ->
+APPLY_FILTER -> [ZOOM_TO_EXTENT]``. The trailing ``ZOOM_TO_EXTENT`` -
+found live to be missing entirely: a spatially-scoped filter (e.g.
+"Fahrradstationen in Wandsbek") pushed matched features onto the map
+with no view change at all, so they could land anywhere relative to
+whatever was already on screen - reuses the resolved location's
+``extent`` when one exists, same field the Zeigen/Navigieren path
+already uses.
+
 ``ZOOM_TO_EXTENT`` comes *after* ``NAVIGATE_TO_LOCATION`` deliberately:
 the frontend executes each command as it arrives with no batching
 (Section 3), and ``NAVIGATE_TO_LOCATION``'s own client-side zoom
@@ -242,4 +251,22 @@ class CommandBuilderComponent:
                 ),
             ).model_dump(by_alias=True)
         )
+
+        # Found live: a spatially-scoped filter (e.g. "Fahrradstationen
+        # in Wandsbek") pushed the matched features as an overlay with
+        # no ZOOM_TO_EXTENT at all - the results could land anywhere
+        # relative to whatever the map already happened to be showing,
+        # with nothing moving the view to them. Reuses the same
+        # location + extent that (when present) drove FilterAgent's own
+        # S_INTERSECTS predicate.
+        locations = aggregated.get("locations") or []
+        extent_location = next((loc for loc in locations if loc.extent), None)
+        if extent_location:
+            commands.append(
+                ZoomToExtentCommand(
+                    command_id=str(uuid.uuid4()),
+                    payload=ZoomToExtentPayload(bbox=extent_location.extent),
+                ).model_dump(by_alias=True)
+            )
+
         return commands
