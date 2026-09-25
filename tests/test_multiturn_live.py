@@ -49,7 +49,7 @@ pytestmark = pytest.mark.skipif(
 )
 
 
-@pytest.fixture
+@pytest.fixture(scope="module")
 def services() -> RealDataServices:
     llm = Qwen3Client(Qwen3Settings())
     return RealDataServices(llm=llm)
