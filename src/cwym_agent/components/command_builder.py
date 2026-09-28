@@ -6,9 +6,14 @@ via the bridge, so the frontend can execute ``ACTIVATE_LAYER`` while
 single combined payload.
 
 When a resolved location carries a district-level area boundary, the
-build order for a "Zeigen"/"Navigieren" turn is ``ACTIVATE_LAYER ->
-DRAW_BOUNDARY -> NAVIGATE_TO_LOCATION -> ZOOM_TO_EXTENT`` - draws the
-district for visual context, but (unlike an earlier version of this
+build order for a "Zeigen"/"Navigieren" turn is ``[DEACTIVATE_LAYER...]
+-> ACTIVATE_LAYER -> DRAW_BOUNDARY -> NAVIGATE_TO_LOCATION ->
+ZOOM_TO_EXTENT``. The leading ``DEACTIVATE_LAYER``s only fire for
+active layers the query explicitly named to stop showing (e.g. "zeige
+U-Bahn, aber nicht mehr Fahrradstationen") - Section 10.5 rule 5; an
+ordinary Zeigen turn never deactivates anything on its own, a new layer
+only ever adds to what's active. ``DRAW_BOUNDARY`` draws the district
+for visual context, but (unlike an earlier version of this
 component) does not spatially restrict the activated layer's own
 features; that's now ``FilterAgent``'s job for a "Filter" turn, via
 real server-side OGC API Features CQL2 queries rather than client-side
@@ -136,6 +141,22 @@ class CommandBuilderComponent:
             return []
 
         commands: list[dict] = []
+
+        # Section 10.5 rule 5: only deactivates ids the query explicitly
+        # named ("aber nicht mehr X") - validated against what's
+        # actually active rather than trusted blindly, same defensive
+        # posture as build_context's own id validation. An ordinary
+        # Zeigen turn (deactivate_layer_ids empty) never deactivates
+        # anything - a new layer only ever adds to what's active.
+        active_layer_ids = context.map_state.active_layer_ids if context else []
+        to_deactivate = [i for i in (action.deactivate_layer_ids or []) if i in active_layer_ids]
+        for layer_id in to_deactivate:
+            commands.append(
+                DeactivateLayerCommand(
+                    command_id=str(uuid.uuid4()),
+                    payload=DeactivateLayerPayload(layer_ids=[layer_id]),
+                ).model_dump(by_alias=True)
+            )
 
         layer = aggregated.get("layer")
         if layer:

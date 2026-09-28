@@ -83,6 +83,38 @@ class TestAllowedLayerIdsDispatch:
         ]
 
 
+class TestActionDetectorDeactivateLayerIds:
+    """"zeige U-Bahn, aber nicht mehr Fahrradstationen" (Section 10.5
+    rule 5) - the planner matches active layer names against the query
+    itself and passes the id(s) straight through as a plan arg."""
+
+    def test_deactivate_layer_ids_attached_to_action_match(self):
+        data_services = FakeDataServices()
+        component = AgentExecutorComponent(data_services=data_services)
+        plan = {
+            "steps": [
+                {
+                    "agent_name": "action_detector",
+                    "args": {"query": "test", "deactivateLayerIds": ["27764"]},
+                }
+            ]
+        }
+
+        result = component.run(plan)
+
+        [entry] = result["execution_log"]
+        assert entry["result"] == ActionMatch("Zeigen", 0.85, ["27764"])
+
+    def test_missing_deactivate_layer_ids_defaults_to_empty(self):
+        data_services = FakeDataServices()
+        component = AgentExecutorComponent(data_services=data_services)
+
+        result = component.run(_plan("action_detector"))
+
+        [entry] = result["execution_log"]
+        assert entry["result"].deactivate_layer_ids == []
+
+
 class TestFilterAgentDispatch:
     def test_sees_earlier_steps_layer_and_location(self):
         data_services = FakeDataServices()

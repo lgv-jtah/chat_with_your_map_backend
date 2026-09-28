@@ -31,13 +31,18 @@ _FEATURES = {"type": "FeatureCollection", "features": [{"type": "Feature", "prop
 
 
 def _aggregated(
-    action_type: str | None, layer=None, locations=None, query="", filter_result=None
+    action_type: str | None,
+    layer=None,
+    locations=None,
+    query="",
+    filter_result=None,
+    deactivate_layer_ids=None,
 ) -> dict:
     return {
         "query": query,
         "locations": locations or [],
         "layer": layer,
-        "action": ActionMatch(action_type, 0.9) if action_type else None,
+        "action": ActionMatch(action_type, 0.9, deactivate_layer_ids or []) if action_type else None,
         "filter_result": filter_result,
     }
 
@@ -106,6 +111,61 @@ class TestBuildCommands:
 
         assert [cmd["type"] for cmd in commands] == ["OPEN_TOOL"]
         assert commands[0]["payload"]["toolName"] == "CONTACT"
+
+
+class TestDeactivateLayer:
+    """"zeige U-Bahn, aber nicht mehr Fahrradstationen" - Section 10.5
+    rule 5."""
+
+    def test_named_active_layer_deactivated_before_activating_new_one(self):
+        aggregated = _aggregated("Zeigen", layer=_LAYER, deactivate_layer_ids=["99999"])
+        context = ConversationContext(map_state=MapStateIn(active_layer_ids=["99999"]), history=[])
+
+        commands = builder._build_commands(aggregated, context)
+
+        assert [cmd["type"] for cmd in commands] == ["DEACTIVATE_LAYER", "ACTIVATE_LAYER"]
+        assert commands[0]["payload"]["layerIds"] == ["99999"]
+        assert commands[1]["payload"]["layerIds"] == ["27764"]
+
+    def test_ordinary_zeigen_turn_deactivates_nothing(self):
+        """No deactivate_layer_ids at all - a new layer only ever adds
+        to what's active, it doesn't silently drop others."""
+
+        aggregated = _aggregated("Zeigen", layer=_LAYER)
+        context = ConversationContext(map_state=MapStateIn(active_layer_ids=["99999"]), history=[])
+
+        commands = builder._build_commands(aggregated, context)
+
+        assert [cmd["type"] for cmd in commands] == ["ACTIVATE_LAYER"]
+
+    def test_deactivate_id_not_actually_active_is_ignored(self):
+        """Defensive: don't trust the planner's output blindly - only
+        deactivate ids actually in the live map state, same posture as
+        build_context's own id validation."""
+
+        aggregated = _aggregated("Zeigen", layer=_LAYER, deactivate_layer_ids=["12345"])
+        context = ConversationContext(map_state=MapStateIn(active_layer_ids=["99999"]), history=[])
+
+        commands = builder._build_commands(aggregated, context)
+
+        assert [cmd["type"] for cmd in commands] == ["ACTIVATE_LAYER"]
+
+    def test_no_context_deactivates_nothing(self):
+        aggregated = _aggregated("Zeigen", layer=_LAYER, deactivate_layer_ids=["99999"])
+
+        commands = builder._build_commands(aggregated, context=None)
+
+        assert [cmd["type"] for cmd in commands] == ["ACTIVATE_LAYER"]
+
+    def test_multiple_deactivate_ids_all_emitted(self):
+        aggregated = _aggregated("Zeigen", layer=_LAYER, deactivate_layer_ids=["11111", "22222"])
+        context = ConversationContext(
+            map_state=MapStateIn(active_layer_ids=["11111", "22222", "33333"]), history=[]
+        )
+
+        commands = builder._build_commands(aggregated, context)
+
+        assert [cmd["type"] for cmd in commands] == ["DEACTIVATE_LAYER", "DEACTIVATE_LAYER", "ACTIVATE_LAYER"]
 
 
 class TestBuildFilterCommands:

@@ -108,7 +108,15 @@ class AgentExecutorComponent:
         if agent_name == "layer_resolver":
             return self.data_services.resolve_layer(query, allowed_layer_ids=allowed_layer_ids)
         if agent_name == "action_detector":
-            return self.data_services.detect_action(query)
+            action = self.data_services.detect_action(query)
+            # The planner already sees active layer names+ids in its own
+            # prompt (Section 10.5) and matches them itself when the
+            # query names one to stop showing - passed straight through
+            # as a plan arg, not re-resolved here. command_builder
+            # validates these against what's actually active before
+            # building any DEACTIVATE_LAYER command.
+            action.deactivate_layer_ids = [str(i) for i in args.get("deactivateLayerIds") or []]
+            return action
         if agent_name == "filter_agent":
             return self._run_filter_agent(query, args, results_by_agent, context, layer_catalog)
 

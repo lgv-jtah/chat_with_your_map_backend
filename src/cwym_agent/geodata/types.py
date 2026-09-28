@@ -66,6 +66,14 @@ class LayerMatch:
 class ActionMatch:
     action_type: str
     confidence: float
+    deactivate_layer_ids: list[str] = field(default_factory=list)
+    """Active layer ids the query explicitly asked to stop showing
+    (e.g. "zeige U-Bahn, aber nicht mehr Fahrradstationen") - matched
+    by the planner itself against the "Aktive Ebenen" it already sees
+    in its own prompt (Section 10.5), passed straight through as plan
+    args rather than re-resolved here. Empty for an ordinary Zeigen
+    turn with no such instruction - a new layer only ever *adds* to
+    what's active unless the query says otherwise."""
 
 
 @dataclass

@@ -72,7 +72,18 @@ SUB_AGENTS: list[SubAgentSpec] = [
                 "query": {
                     "type": "string",
                     "description": "Die Nutzeranfrage oder der relevante Aktionsanteil davon.",
-                }
+                },
+                "deactivateLayerIds": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                    "description": (
+                        "IDs aktiver Ebenen (aus 'Aktive Ebenen' im Kontext), die laut "
+                        "Anfrage NICHT MEHR angezeigt werden sollen (z.B. 'aber nicht "
+                        "mehr Fahrradstationen', 'ohne X', 'blende X aus'). Nur füllen, "
+                        "wenn die Anfrage das explizit so sagt - eine normale neue "
+                        "Anfrage deaktiviert nichts."
+                    ),
+                },
             },
             "required": ["query"],
         },
