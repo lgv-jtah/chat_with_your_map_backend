@@ -177,3 +177,36 @@ class TestMT5NewLayerIgnoresContext:
         assert "ACTIVATE_LAYER" in types
         activate_2 = next(cmd for cmd in turn2_commands if cmd["type"] == "ACTIVATE_LAYER")
         assert activate_2["payload"]["layerIds"] != [schulen_layer_id]
+
+
+class TestMT8ClearFilter:
+    """"zeig wieder alle" (Section 10.5 rule 6) - drops the active
+    filter and restores the full layer, instead of filtering again."""
+
+    @pytest.mark.parametrize(
+        "follow_up", ["Zeig wieder alle Krankenhäuser", "Entferne den Filter", "Filter aufheben"]
+    )
+    def test_follow_up_clears_filter_and_reactivates_layer(self, services, follow_up):
+        # Turn 1's filter state is seeded directly rather than produced by
+        # a live "Filtere Krankenhäuser in Wandsbek" turn - that planning
+        # step is itself flaky, and a skip there would hide whether the
+        # clear works at all.
+        layer_id = services.resolve_layer("Krankenhäuser").layer_id
+        context = ConversationContext(
+            map_state=MapStateIn(
+                filters=[
+                    FilterStateIn.model_validate(
+                        {"layerId": layer_id, "filterSpec": {"area": {"name": "Wandsbek", "kind": "bezirk"}}}
+                    )
+                ]
+            ),
+            history=[],
+        )
+        execution_log, commands = _run_turn(services, follow_up, context)
+
+        assert "filter_agent" not in _agent_names(execution_log)
+        types = [cmd["type"] for cmd in commands]
+        assert types[:2] == ["CLEAR_FILTER", "ACTIVATE_LAYER"]
+        assert commands[0]["payload"]["layerId"] == layer_id
+        assert commands[1]["payload"]["layerIds"] == [layer_id]
+        assert "APPLY_FILTER" not in types

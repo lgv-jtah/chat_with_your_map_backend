@@ -204,6 +204,30 @@ class TestRenderContextBlock:
         assert "Nutzer: wo finde ich alle Schulen" in block
         assert "Assistent: Ich zeige dir Schulen." in block
 
+    def test_active_filter_rendered_with_its_layer_id(self):
+        """The planner needs the id to pass as clearFilterLayerIds
+        ("zeig wieder alle", Section 10.5 rule 6)."""
+
+        ctx = ConversationContext(
+            map_state=MapStateIn.model_validate(
+                {
+                    "filters": [
+                        {
+                            "layerId": "1732",
+                            "filterSpec": {"conditions": [{"field": "schulform", "operator": "eq", "value": "Gymnasium"}]},
+                        }
+                    ]
+                }
+            ),
+            history=[],
+        )
+        catalog = _catalog(("1732", "Schulen Hamburg"))
+
+        block = render_context_block(ctx, catalog)
+
+        assert "Aktive Filter:" in block
+        assert '- Schulen Hamburg (ID 1732): schulform eq "Gymnasium"' in block
+
     def test_last_location_rendered(self):
         ctx = ConversationContext(
             map_state=MapStateIn.model_validate({"lastLocation": {"name": "Wandsbek", "kind": "bezirk"}}),

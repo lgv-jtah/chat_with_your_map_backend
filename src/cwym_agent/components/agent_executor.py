@@ -116,6 +116,7 @@ class AgentExecutorComponent:
             # validates these against what's actually active before
             # building any DEACTIVATE_LAYER command.
             action.deactivate_layer_ids = [str(i) for i in args.get("deactivateLayerIds") or []]
+            action.clear_filter_layer_ids = [str(i) for i in args.get("clearFilterLayerIds") or []]
             return action
         if agent_name == "filter_agent":
             return self._run_filter_agent(query, args, results_by_agent, context, layer_catalog)

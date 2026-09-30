@@ -121,12 +121,16 @@ class TextResponseComponent:
         action = aggregated.get("action")
         filter_result = aggregated.get("filter_result")
 
+        # "Filter entfernen" keyword-detects as action "Filter" - naming
+        # that action next to "Filter aufgehoben" would contradict it.
+        cleared = [cmd["payload"]["layerId"] for cmd in commands if cmd["type"] == "CLEAR_FILTER"]
+
         facts: list[str] = []
         if locations:
             facts.append(f"Ort: {locations[0].name}")
         if layer:
             facts.append(f"Kartenebene: {layer.name}")
-        if action:
+        if action and not cleared:
             facts.append(f"Aktion: {action.action_type}")
         if filter_result:
             # number_matched (OGC API Features' numberMatched) is optional
@@ -136,6 +140,10 @@ class TextResponseComponent:
             if count is None:
                 count = len(filter_result.features.get("features", []))
             facts.append(f"Gefilterte Ergebnisse: {count} Treffer")
+
+        for layer_id in cleared:
+            name = layer_catalog.name(layer_id) if layer_catalog is not None else layer_id
+            facts.append(f"Filter aufgehoben, wieder alle Objekte sichtbar: {name}")
 
         resolved = "; ".join(facts)
         return (

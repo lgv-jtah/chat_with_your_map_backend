@@ -120,3 +120,21 @@ class TestCommandsPresentNarratesFromFacts:
         result = component.run(aggregated, aggregated["query"], commands=commands)
 
         assert "42 Treffer" in result["response_text"]
+
+
+class TestClearFilterNarration:
+    def test_cleared_filter_named_and_filter_action_not_mentioned(self):
+        """"Filter entfernen" keyword-detects as action "Filter" - the
+        prompt must say the filter was lifted, not name a Filter action."""
+
+        aggregated = _aggregated(query="Filter entfernen", action=ActionMatch("Filter", 0.9, clear_filter_layer_ids=["1732"]))
+        commands = [
+            {"type": "CLEAR_FILTER", "payload": {"layerId": "1732"}},
+            {"type": "ACTIVATE_LAYER", "payload": {"layerIds": ["1732"]}},
+        ]
+        catalog = LayerCatalog({"1732": LayerMatch("Schulen Hamburg", "1732", 1.0)})
+
+        prompt = component.run(aggregated, aggregated["query"], commands=commands, layer_catalog=catalog)["response_text"]
+
+        assert "Filter aufgehoben, wieder alle Objekte sichtbar: Schulen Hamburg" in prompt
+        assert "Aktion: Filter" not in prompt

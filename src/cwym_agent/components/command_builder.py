@@ -19,6 +19,14 @@ features; that's now ``FilterAgent``'s job for a "Filter" turn, via
 real server-side OGC API Features CQL2 queries rather than client-side
 masking (see ``cwym-agent-architecture.md`` Section 9).
 
+Removing a filter ("zeig wieder alle") prepends ``CLEAR_FILTER ->
+ACTIVATE_LAYER`` per layer the query named (Section 10.5 rule 6),
+validated against the filters actually active in the map state - the
+full layer comes back, since the filter turn had hidden it (or never
+showed it). This runs whatever ``action_type`` the keyword detector
+settled on: "Filter entfernen" contains "filter" and so detects as
+"Filter", which would otherwise build nothing at all.
+
 A "Filter" turn's own build order is ``[DEACTIVATE_LAYER] ->
 APPLY_FILTER -> [ZOOM_TO_EXTENT]``. The trailing ``ZOOM_TO_EXTENT`` -
 found live to be missing entirely: a spatially-scoped filter (e.g.
@@ -51,6 +59,8 @@ from cwym_agent.map_commands import (
     ActivateLayerPayload,
     ApplyFilterCommand,
     ApplyFilterPayload,
+    ClearFilterCommand,
+    ClearFilterPayload,
     Coordinates,
     DeactivateLayerCommand,
     DeactivateLayerPayload,
@@ -126,11 +136,13 @@ class CommandBuilderComponent:
         if action is None:
             return []
 
+        commands, restored_layer_ids = self._build_clear_filter_commands(action, context)
+
         if action.action_type == "Öffne":
             tool_name = _detect_tool_name(aggregated.get("query", ""))
             if tool_name is None:
-                return []
-            return [
+                return commands
+            return commands + [
                 OpenToolCommand(
                     command_id=str(uuid.uuid4()),
                     payload=OpenToolPayload(tool_name=tool_name),
@@ -138,9 +150,7 @@ class CommandBuilderComponent:
             ]
 
         if action.action_type not in _ACTIONABLE_TYPES:
-            return []
-
-        commands: list[dict] = []
+            return commands
 
         # Section 10.5 rule 5: only deactivates ids the query explicitly
         # named ("aber nicht mehr X") - validated against what's
@@ -159,7 +169,7 @@ class CommandBuilderComponent:
             )
 
         layer = aggregated.get("layer")
-        if layer:
+        if layer and layer.layer_id not in restored_layer_ids:
             commands.append(
                 ActivateLayerCommand(
                     command_id=str(uuid.uuid4()),
@@ -209,6 +219,36 @@ class CommandBuilderComponent:
             )
 
         return commands
+
+    def _build_clear_filter_commands(
+        self, action, context: ConversationContext | None
+    ) -> tuple[list[dict], list[str]]:
+        """``CLEAR_FILTER`` + ``ACTIVATE_LAYER`` for each layer whose
+        filter the query asked to drop - only ids with a filter actually
+        in the map state, the planner's output isn't trusted blindly.
+        Also returns the restored ids so the caller doesn't activate the
+        same layer twice if layer_resolver resolved it too."""
+
+        filtered_layer_ids = [f.layer_id for f in context.map_state.filters] if context else []
+        to_clear = list(dict.fromkeys(
+            i for i in (action.clear_filter_layer_ids or []) if i in filtered_layer_ids
+        ))
+
+        commands: list[dict] = []
+        for layer_id in to_clear:
+            commands.append(
+                ClearFilterCommand(
+                    command_id=str(uuid.uuid4()),
+                    payload=ClearFilterPayload(layer_id=layer_id),
+                ).model_dump(by_alias=True)
+            )
+            commands.append(
+                ActivateLayerCommand(
+                    command_id=str(uuid.uuid4()),
+                    payload=ActivateLayerPayload(layer_ids=[layer_id]),
+                ).model_dump(by_alias=True)
+            )
+        return commands, to_clear
 
     def _build_filter_commands(
         self, aggregated: dict, context: ConversationContext | None = None

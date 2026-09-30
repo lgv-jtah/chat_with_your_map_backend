@@ -84,6 +84,17 @@ SUB_AGENTS: list[SubAgentSpec] = [
                         "Anfrage deaktiviert nichts."
                     ),
                 },
+                "clearFilterLayerIds": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                    "description": (
+                        "IDs von Ebenen mit aktivem Filter (aus 'Aktive Filter' im "
+                        "Kontext), deren Filter laut Anfrage aufgehoben werden soll, "
+                        "sodass wieder alle Objekte der Ebene angezeigt werden (z.B. "
+                        "'zeig wieder alle', 'Filter entfernen', 'ohne Filter'). Nur "
+                        "füllen, wenn die Anfrage das explizit so sagt."
+                    ),
+                },
             },
             "required": ["query"],
         },

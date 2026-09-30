@@ -1,7 +1,7 @@
 """Unit tests for ``CommandBuilderComponent._build_commands``."""
 
 from cwym_agent.components.command_builder import CommandBuilderComponent
-from cwym_agent.geodata.conversation_context import ConversationContext, MapStateIn
+from cwym_agent.geodata.conversation_context import ConversationContext, FilterStateIn, MapStateIn
 from cwym_agent.geodata.types import ActionMatch, FilterCondition, FilterResult, LayerMatch, LocationMatch
 
 _WANDSBEK_BOUNDARY = {
@@ -326,3 +326,71 @@ class TestFilterCommandsWithContext:
         commands = builder._build_commands(aggregated)
 
         assert commands[0]["payload"]["filterSpec"] is None
+
+
+def _filtered_context(*layer_ids: str) -> ConversationContext:
+    return ConversationContext(
+        map_state=MapStateIn(
+            filters=[FilterStateIn.model_validate({"layerId": i, "filterSpec": {}}) for i in layer_ids]
+        ),
+        history=[],
+    )
+
+
+def _clear_action(action_type: str, *layer_ids: str) -> ActionMatch:
+    return ActionMatch(action_type, 0.9, clear_filter_layer_ids=list(layer_ids))
+
+
+class TestClearFilter:
+    """"zeig wieder alle" - Section 10.5 rule 6."""
+
+    def test_clears_filter_and_restores_full_layer(self):
+        aggregated = {**_aggregated(None), "action": _clear_action("Zeigen", "1732")}
+
+        commands = builder._build_commands(aggregated, _filtered_context("1732"))
+
+        assert [cmd["type"] for cmd in commands] == ["CLEAR_FILTER", "ACTIVATE_LAYER"]
+        assert commands[0]["payload"] == {"layerId": "1732"}
+        assert commands[1]["payload"]["layerIds"] == ["1732"]
+
+    def test_filter_keyword_action_still_clears(self):
+        """"Filter entfernen" keyword-detects as "Filter", which isn't in
+        _ACTIONABLE_TYPES - the clear must not depend on that."""
+
+        aggregated = {**_aggregated(None), "action": _clear_action("Filter", "1732")}
+
+        commands = builder._build_commands(aggregated, _filtered_context("1732"))
+
+        assert [cmd["type"] for cmd in commands] == ["CLEAR_FILTER", "ACTIVATE_LAYER"]
+
+    def test_id_without_active_filter_is_ignored(self):
+        aggregated = {**_aggregated(None), "action": _clear_action("Zeigen", "99999")}
+
+        assert builder._build_commands(aggregated, _filtered_context("1732")) == []
+
+    def test_no_context_clears_nothing(self):
+        aggregated = {**_aggregated(None), "action": _clear_action("Zeigen", "1732")}
+
+        assert builder._build_commands(aggregated) == []
+
+    def test_resolved_layer_same_as_cleared_is_not_activated_twice(self):
+        layer = LayerMatch(name="Schulen Hamburg", layer_id="1732", confidence=0.9)
+        aggregated = {**_aggregated(None, layer=layer), "action": _clear_action("Zeigen", "1732")}
+
+        commands = builder._build_commands(aggregated, _filtered_context("1732"))
+
+        assert [cmd["type"] for cmd in commands] == ["CLEAR_FILTER", "ACTIVATE_LAYER"]
+
+    def test_duplicate_ids_cleared_once(self):
+        aggregated = {**_aggregated(None), "action": _clear_action("Zeigen", "1732", "1732")}
+
+        commands = builder._build_commands(aggregated, _filtered_context("1732"))
+
+        assert [cmd["type"] for cmd in commands] == ["CLEAR_FILTER", "ACTIVATE_LAYER"]
+
+    def test_ordinary_zeigen_turn_clears_nothing(self):
+        aggregated = _aggregated("Zeigen", layer=_LAYER)
+
+        commands = builder._build_commands(aggregated, _filtered_context("1732"))
+
+        assert [cmd["type"] for cmd in commands] == ["ACTIVATE_LAYER"]

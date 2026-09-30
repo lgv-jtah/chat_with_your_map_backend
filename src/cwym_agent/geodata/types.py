@@ -74,6 +74,11 @@ class ActionMatch:
     args rather than re-resolved here. Empty for an ordinary Zeigen
     turn with no such instruction - a new layer only ever *adds* to
     what's active unless the query says otherwise."""
+    clear_filter_layer_ids: list[str] = field(default_factory=list)
+    """Layer ids whose active filter the query explicitly asked to drop
+    ("zeig wieder alle", "Filter entfernen") - matched by the planner
+    against the "Aktive Filter" in its prompt, same pass-through as
+    deactivate_layer_ids."""
 
 
 @dataclass

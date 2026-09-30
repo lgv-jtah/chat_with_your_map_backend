@@ -6,13 +6,12 @@ Each command is a discriminated union member keyed on ``type``, with a
 constructs these; the Masterportal frontend executes each one on receipt
 of the matching AG-UI ``TOOL_CALL_RESULT`` event.
 
-``ACTIVATE_LAYER``, ``NAVIGATE_TO_LOCATION``, ``ZOOM_TO_EXTENT``,
-``DRAW_BOUNDARY``, ``APPLY_FILTER`` (see Section 9) and ``OPEN_TOOL``
-are actually built by ``CommandBuilderComponent`` today - the other
-three types are modeled here for closed-enum completeness (so the
-frontend dispatcher has a real schema to switch on) but nothing in the
-pipeline constructs them yet: ``DEACTIVATE_LAYER`` needs resolver data
-that doesn't exist yet (a "deactivate" action label), and
+``ACTIVATE_LAYER``, ``DEACTIVATE_LAYER``, ``NAVIGATE_TO_LOCATION``,
+``ZOOM_TO_EXTENT``, ``DRAW_BOUNDARY``, ``APPLY_FILTER`` (see Section 9),
+``CLEAR_FILTER`` and ``OPEN_TOOL`` are actually built by
+``CommandBuilderComponent`` today - the other types are modeled here
+for closed-enum completeness (so the frontend dispatcher has a real
+schema to switch on) but nothing in the pipeline constructs them yet:
 ``SET_LANGUAGE``/``HIGHLIGHT_FEATURE``/``CLEAR_HIGHLIGHTS`` need intent
 detection that's explicitly out of scope for this change (language-
 switch detection, an explicit "clear the map" intent). This is
@@ -31,6 +30,13 @@ from ``FilterAgent``'s OGC API Features query as an ad-hoc overlay -
 the same "agent-computed geometry pushed to the map" pattern as
 ``DRAW_BOUNDARY`` - not an abstract condition list for the frontend to
 re-interpret against an already-loaded layer.
+
+``CLEAR_FILTER`` undoes one: it drops that layer's overlay and its
+recorded filterSpec on the frontend ("zeig wieder alle"). A dedicated
+command rather than a DEACTIVATE_LAYER convention, since the overlay
+isn't a catalog layer and the frontend's filter state has to be cleared
+along with it. It never restores the full layer by itself -
+``CommandBuilderComponent`` pairs it with an ``ACTIVATE_LAYER``.
 """
 
 from typing import Annotated, Any, Literal, Union
@@ -148,6 +154,12 @@ class ApplyFilterPayload(_CamelModel):
     to remember anything server-side."""
 
 
+class ClearFilterPayload(_CamelModel):
+    layer_id: str
+    """The layer whose APPLY_FILTER overlay (and recorded filterSpec)
+    the frontend should drop - the same id APPLY_FILTER carried."""
+
+
 class OpenToolPayload(_CamelModel):
     tool_name: Literal["PRINT", "LEGEND", "SHARE", "ABOUT", "CONTACT"]
     prefill: OpenToolPrefill | None = None
@@ -204,6 +216,11 @@ class ApplyFilterCommand(_MapCommandBase):
     payload: ApplyFilterPayload
 
 
+class ClearFilterCommand(_MapCommandBase):
+    type: Literal["CLEAR_FILTER"] = "CLEAR_FILTER"
+    payload: ClearFilterPayload
+
+
 class OpenToolCommand(_MapCommandBase):
     type: Literal["OPEN_TOOL"] = "OPEN_TOOL"
     payload: OpenToolPayload
@@ -224,6 +241,7 @@ MapCommand = Annotated[
         HighlightFeatureCommand,
         ClearHighlightsCommand,
         ApplyFilterCommand,
+        ClearFilterCommand,
         OpenToolCommand,
         SetLanguageCommand,
     ],

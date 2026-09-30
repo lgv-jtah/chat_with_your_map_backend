@@ -115,6 +115,30 @@ class TestActionDetectorDeactivateLayerIds:
         assert entry["result"].deactivate_layer_ids == []
 
 
+class TestActionDetectorClearFilterLayerIds:
+    """"zeig wieder alle" (Section 10.5 rule 6) - same pass-through as
+    deactivateLayerIds."""
+
+    def test_clear_filter_layer_ids_attached_to_action_match(self):
+        component = AgentExecutorComponent(data_services=FakeDataServices())
+        plan = {
+            "steps": [
+                {"agent_name": "action_detector", "args": {"query": "test", "clearFilterLayerIds": [1732]}}
+            ]
+        }
+
+        [entry] = component.run(plan)["execution_log"]
+
+        assert entry["result"].clear_filter_layer_ids == ["1732"]
+
+    def test_missing_clear_filter_layer_ids_defaults_to_empty(self):
+        component = AgentExecutorComponent(data_services=FakeDataServices())
+
+        [entry] = component.run(_plan("action_detector"))["execution_log"]
+
+        assert entry["result"].clear_filter_layer_ids == []
+
+
 class TestFilterAgentDispatch:
     def test_sees_earlier_steps_layer_and_location(self):
         data_services = FakeDataServices()
