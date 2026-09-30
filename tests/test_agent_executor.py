@@ -153,6 +153,38 @@ class TestFilterAgentDispatch:
         assert mode == "replace"
         assert prior_conditions is None
 
+    def test_filter_agent_planned_first_still_sees_layer_and_location(self):
+        """Found live: Qwen3 often plans filter_agent before the steps it
+        depends on - the executor runs it last regardless."""
+
+        data_services = FakeDataServices()
+        component = AgentExecutorComponent(data_services=data_services)
+
+        result = component.run(_plan("filter_agent", "layer_resolver", "location_extractor"))
+
+        [(_, layer, location, _, _)] = data_services.apply_filter_calls
+        assert layer == LayerMatch("Some Layer", "1", 0.9)
+        assert location == LocationMatch("Hamburg", 53.5511, 9.9937, 0.9)
+        assert [e["agent_name"] for e in result["execution_log"]] == [
+            "layer_resolver",
+            "location_extractor",
+            "filter_agent",
+        ]
+
+    def test_non_filter_steps_keep_their_planned_order(self):
+        component = AgentExecutorComponent(data_services=FakeDataServices())
+
+        result = component.run(
+            _plan("action_detector", "filter_agent", "location_extractor", "layer_resolver")
+        )
+
+        assert [e["agent_name"] for e in result["execution_log"]] == [
+            "action_detector",
+            "location_extractor",
+            "layer_resolver",
+            "filter_agent",
+        ]
+
     def test_no_layer_or_location_step_means_both_none(self):
         data_services = FakeDataServices()
         component = AgentExecutorComponent(data_services=data_services)

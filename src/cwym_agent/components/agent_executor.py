@@ -8,6 +8,7 @@ per query. Each sub-agent call is reported to the AG-UI bridge as a
 provided.
 """
 
+import logging
 from dataclasses import asdict, is_dataclass
 from typing import Any
 
@@ -18,6 +19,8 @@ from cwym_agent.geodata.conversation_context import ConversationContext
 from cwym_agent.geodata.portal_catalog_resolver import LayerCatalog
 from cwym_agent.geodata.real_data_services import RealDataServices
 from cwym_agent.geodata.types import FilterCondition
+
+logger = logging.getLogger(__name__)
 
 
 def _serializable(value):
@@ -50,6 +53,31 @@ def _tool_call_result_view(agent_name: str, serialized_result):
     return serialized_result
 
 
+def _dependencies_first(steps: list[dict]) -> list[dict]:
+    """Moves filter_agent steps after every other step, keeping each
+    group's own order.
+
+    filter_agent reads layer_resolver's/location_extractor's results,
+    but the plan's order is whatever Qwen3 emitted - found live: for
+    "Filtere Krankenhäuser in Wandsbek", 5 of 10 plans put filter_agent
+    first despite sub_agents.py's description asking otherwise, so it
+    ran with no layer and filtered nothing. No other sub-agent reads an
+    earlier step's result, so moving filter_agent last is the whole
+    dependency order.
+    """
+
+    ordered = [s for s in steps if s["agent_name"] != "filter_agent"] + [
+        s for s in steps if s["agent_name"] == "filter_agent"
+    ]
+    if ordered != steps:
+        logger.info(
+            "agent_executor: reordered plan %r -> %r",
+            [s["agent_name"] for s in steps],
+            [s["agent_name"] for s in ordered],
+        )
+    return ordered
+
+
 @component
 class AgentExecutorComponent:
     def __init__(self, data_services: Any | None = None):
@@ -68,14 +96,10 @@ class AgentExecutorComponent:
         # Accumulated as steps execute (not just aggregated afterward),
         # so a later step in the same plan - filter_agent - can see an
         # earlier step's result, e.g. the layer/location it should
-        # filter. Relies on MasterAgentComponent's plan ordering
-        # location_extractor/layer_resolver before filter_agent (see
-        # sub_agents.py's filter_agent description) - a best-effort
-        # prompt-engineering guarantee like the rest of this pipeline's
-        # LLM-assisted steps, not a hard one.
+        # filter.
         results_by_agent: dict[str, object] = {}
 
-        for step in plan_json.get("steps", []):
+        for step in _dependencies_first(plan_json.get("steps", [])):
             agent_name = step["agent_name"]
             args = step.get("args", {})
             result = self._run_sub_agent(
