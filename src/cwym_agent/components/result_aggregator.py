@@ -1,7 +1,7 @@
 """``ResultAggregatorComponent``: combines sub-agent results.
 
 Combines the results from all sub-agent calls (location, layer, action,
-filter) into a single unified result set, shared by ``CommandBuilderComponent``
+filter, analysis) into a single unified result set, shared by ``CommandBuilderComponent``
 (builds the typed ``MapCommand`` stream) and ``TextResponseComponent``
 (builds the NLG reply).
 """
@@ -21,6 +21,7 @@ class ResultAggregatorComponent:
             "layer": by_agent.get("layer_resolver"),
             "action": by_agent.get("action_detector"),
             "filter_result": by_agent.get("filter_agent"),
+            "analysis_result": by_agent.get("udp_analysis"),
         }
 
         return {"aggregated": aggregated}

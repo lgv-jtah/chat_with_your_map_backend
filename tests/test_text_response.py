@@ -8,7 +8,7 @@ the same pattern used elsewhere for a cheap, deterministic LLM double.
 from cwym_agent.components.text_response import TextResponseComponent
 from cwym_agent.geodata.conversation_context import ConversationContext, MapStateIn
 from cwym_agent.geodata.portal_catalog_resolver import LayerCatalog
-from cwym_agent.geodata.types import ActionMatch, FilterResult, LayerMatch, LocationMatch
+from cwym_agent.geodata.types import ActionMatch, AnalysisResult, FilterResult, LayerMatch, LocationMatch
 from cwym_agent.stubs.qwen3 import StubQwen3Generator
 
 _LOCATION = LocationMatch(name="Wandsbek", latitude=53.6, longitude=10.1, confidence=0.9)
@@ -138,3 +138,25 @@ class TestClearFilterNarration:
 
         assert "Filter aufgehoben, wieder alle Objekte sichtbar: Schulen Hamburg" in prompt
         assert "Aktion: Filter" not in prompt
+
+
+class TestAnalysisReply:
+    class _NoLLM:
+        def generate(self, *args, **kwargs):
+            raise AssertionError("an analysis reply must not go through the LLM")
+
+    def test_udp_answer_passed_through_verbatim(self):
+        component = TextResponseComponent(llm=self._NoLLM())
+        answer = "Im Bezirk Altona gibt es **19** StadtRAD-Stationen."
+        aggregated = _aggregated(query="Wie viele?", analysis_result=AnalysisResult(answer=answer))
+
+        assert component.run(aggregated, "Wie viele?", commands=[])["response_text"] == answer
+
+    def test_failed_analysis_says_so(self):
+        component = TextResponseComponent(llm=self._NoLLM())
+        aggregated = _aggregated(query="Wie viele?", analysis_result=AnalysisResult(answer=None, error="timeout"))
+
+        text = component.run(aggregated, "Wie viele?", commands=[])["response_text"]
+
+        assert "keine Antwort" in text
+        assert "nicht verändert" in text

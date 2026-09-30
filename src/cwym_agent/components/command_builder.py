@@ -36,6 +36,13 @@ whatever was already on screen - reuses the resolved location's
 ``extent`` when one exists, same field the Zeigen/Navigieren path
 already uses.
 
+A UDP analysis turn (Section 13) builds ``CLEAR_RESULT_LAYERS ->
+ADD_RESULT_LAYER... -> ZOOM_TO_EXTENT``, context layers before result
+layers so the result draws on top, and nothing else: the analysis is the
+whole turn. An analysis with no layers (the UDP agent asked a clarifying
+question, or failed) builds no commands and leaves the previous result on
+the map.
+
 ``ZOOM_TO_EXTENT`` comes *after* ``NAVIGATE_TO_LOCATION`` deliberately:
 the frontend executes each command as it arrives with no batching
 (Section 3), and ``NAVIGATE_TO_LOCATION``'s own client-side zoom
@@ -56,6 +63,9 @@ from cwym_agent.bridge import AGUIEventBridge
 from cwym_agent.geodata.conversation_context import ConversationContext
 from cwym_agent.map_commands import (
     ActivateLayerCommand,
+    AddResultLayerCommand,
+    AddResultLayerPayload,
+    ClearResultLayersCommand,
     ActivateLayerPayload,
     ApplyFilterCommand,
     ApplyFilterPayload,
@@ -95,6 +105,18 @@ _TOOL_KEYWORDS: list[tuple[tuple[str, ...], str]] = [
 ]
 
 
+# ~1 km in Hamburg - a lone point result would otherwise have a
+# zero-size extent and ZOOM_TO_EXTENT would zoom in as far as it can.
+_MIN_EXTENT_SPAN_DEG = 0.01
+
+
+def _min_span(bbox: tuple[float, float, float, float]) -> tuple[float, float, float, float]:
+    min_x, min_y, max_x, max_y = bbox
+    pad_x = max(0.0, _MIN_EXTENT_SPAN_DEG - (max_x - min_x)) / 2
+    pad_y = max(0.0, _MIN_EXTENT_SPAN_DEG - (max_y - min_y)) / 2
+    return (min_x - pad_x, min_y - pad_y, max_x + pad_x, max_y + pad_y)
+
+
 def _detect_tool_name(query: str) -> str | None:
     lowered = query.lower()
     for keywords, tool_name in _TOOL_KEYWORDS:
@@ -129,6 +151,9 @@ class CommandBuilderComponent:
         # location_extractor/layer_resolver/filter_agent). A resolved
         # filter_result is on its own strong enough evidence of filter
         # intent; it shouldn't depend on action_detector also having run.
+        if aggregated.get("analysis_result") is not None:
+            return self._build_analysis_commands(aggregated["analysis_result"])
+
         if aggregated.get("filter_result") is not None:
             return self._build_filter_commands(aggregated, context)
 
@@ -218,6 +243,49 @@ class CommandBuilderComponent:
                 ).model_dump(by_alias=True)
             )
 
+        return commands
+
+    def _build_analysis_commands(self, analysis) -> list[dict]:
+        if not analysis.layers:
+            return []
+
+        commands: list[dict] = [
+            ClearResultLayersCommand(command_id=str(uuid.uuid4())).model_dump(by_alias=True)
+        ]
+        ordered = sorted(analysis.layers, key=lambda layer: layer.role != "context")
+        for layer in ordered:
+            commands.append(
+                AddResultLayerCommand(
+                    command_id=str(uuid.uuid4()),
+                    payload=AddResultLayerPayload(
+                        layer_key=layer.key,
+                        label=layer.label,
+                        role=layer.role,
+                        features=layer.features,
+                        feature_count=layer.feature_count,
+                        total_features=layer.total_features,
+                        truncated=layer.truncated,
+                        geometry_type=layer.geometry_type,
+                    ),
+                ).model_dump(by_alias=True)
+            )
+
+        bboxes = [layer.bbox for layer in analysis.layers if layer.bbox]
+        if bboxes:
+            extent = _min_span(
+                (
+                    min(b[0] for b in bboxes),
+                    min(b[1] for b in bboxes),
+                    max(b[2] for b in bboxes),
+                    max(b[3] for b in bboxes),
+                )
+            )
+            commands.append(
+                ZoomToExtentCommand(
+                    command_id=str(uuid.uuid4()),
+                    payload=ZoomToExtentPayload(bbox=extent),
+                ).model_dump(by_alias=True)
+            )
         return commands
 
     def _build_clear_filter_commands(

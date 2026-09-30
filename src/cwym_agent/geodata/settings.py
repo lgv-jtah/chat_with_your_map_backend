@@ -121,3 +121,22 @@ class GeodataSettings:
     filter_llm_max_tokens: int = field(
         default_factory=lambda: _env_int("CWYM_FILTER_LLM_MAX_TOKENS", 2048)
     )
+
+    # UDP agent (cmym-agent-architecture.md Section 13): the self-hosted
+    # Hayhooks deployment of the Urban Data Platform analysis agent. One
+    # analysis takes 1.5-3.5 minutes (its own evaluation runs), hence the
+    # long timeout.
+    udp_agent_url: str = field(
+        default_factory=lambda: os.environ.get("CWYM_UDP_AGENT_URL", "http://localhost:1416")
+    )
+    udp_agent_pipeline: str = field(
+        default_factory=lambda: os.environ.get("CWYM_UDP_AGENT_PIPELINE", "udp_agent")
+    )
+    udp_agent_timeout: float = field(
+        default_factory=lambda: _env_float("CWYM_UDP_AGENT_TIMEOUT", 600.0)
+    )
+    # Prior messages forwarded so the UDP agent can resolve its own
+    # clarifying questions ("Welche Fahrradstationen meinen Sie?").
+    udp_agent_history_messages: int = field(
+        default_factory=lambda: _env_int("CWYM_UDP_AGENT_HISTORY_MESSAGES", 6)
+    )

@@ -50,6 +50,16 @@ def _tool_call_result_view(agent_name: str, serialized_result):
             **{key: value for key, value in serialized_result.items() if key != "features"},
             "feature_count": len(features.get("features", [])),
         }
+    # Same for udp_analysis: each layer's FeatureCollection travels once,
+    # in its ADD_RESULT_LAYER command.
+    if agent_name == "udp_analysis" and isinstance(serialized_result, dict):
+        return {
+            **serialized_result,
+            "layers": [
+                {key: value for key, value in layer.items() if key != "features"}
+                for layer in serialized_result.get("layers") or []
+            ],
+        }
     return serialized_result
 
 
@@ -144,6 +154,10 @@ class AgentExecutorComponent:
             return action
         if agent_name == "filter_agent":
             return self._run_filter_agent(query, args, results_by_agent, context, layer_catalog)
+        if agent_name == "udp_analysis":
+            # The UDP agent keeps no session of its own - the recent chat
+            # is what lets it resolve its own clarifying questions.
+            return self.data_services.analyze(query, context.history if context else [])
 
         raise ValueError(f"Unknown sub-agent: {agent_name}")
 

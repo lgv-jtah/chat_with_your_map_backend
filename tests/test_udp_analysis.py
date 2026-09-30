@@ -1,0 +1,147 @@
+"""Unit tests for the UDP agent client (cmym-agent-architecture.md Section 13)."""
+
+import json
+from urllib.parse import parse_qs
+
+import httpx
+
+from cwym_agent.geodata.settings import GeodataSettings
+from cwym_agent.geodata.udp_analysis import UdpAnalysisClient, format_history_and_query, parse_response
+
+_FC = {
+    "type": "FeatureCollection",
+    "features": [{"type": "Feature", "geometry": {"type": "Point", "coordinates": [9.93, 53.55]}, "properties": {}}],
+}
+
+
+def _layer(**overrides):
+    return {
+        "label": "StadtRAD-Stationen in Altona",
+        "role": "result",
+        "geometry_type": "Point",
+        "feature_count": 1,
+        "total_features": 1,
+        "truncated": False,
+        "bbox": [9.93, 53.55, 9.93, 53.55],
+        "features": _FC,
+        **overrides,
+    }
+
+
+class TestParseResponse:
+    def test_answer_and_layers(self):
+        result = parse_response({"result": {"answer": "19 Stationen.", "map_layers": {"stations": _layer()}}})
+
+        assert result.answer == "19 Stationen."
+        assert result.error is None
+        [layer] = result.layers
+        assert layer.key == "stations"
+        assert layer.role == "result"
+        assert layer.feature_count == 1
+        assert layer.bbox == (9.93, 53.55, 9.93, 53.55)
+
+    def test_plain_string_result_means_no_layers(self):
+        """A UDP deployment without map-layer support still answers."""
+
+        result = parse_response({"result": "19 Stationen."})
+
+        assert result.answer == "19 Stationen."
+        assert result.layers == []
+
+    def test_malformed_and_empty_layers_dropped(self):
+        result = parse_response(
+            {
+                "result": {
+                    "answer": "a",
+                    "map_layers": {
+                        "ok": _layer(),
+                        "not_a_dict": "x",
+                        "no_fc": _layer(features={"type": "Feature"}),
+                        "empty": _layer(features={"type": "FeatureCollection", "features": []}),
+                    },
+                }
+            }
+        )
+
+        assert [layer.key for layer in result.layers] == ["ok"]
+
+    def test_unknown_role_falls_back_to_result_and_bad_bbox_to_none(self):
+        [layer] = parse_response(
+            {"result": {"answer": "a", "map_layers": {"k": _layer(role="highlight", bbox=[1, 2])}}}
+        ).layers
+
+        assert layer.role == "result"
+        assert layer.bbox is None
+
+    def test_unexpected_shape_is_an_error(self):
+        result = parse_response({"something": "else"})
+
+        assert result.answer is None
+        assert result.error
+
+
+class TestFormatHistoryAndQuery:
+    def test_format_matches_udp_history_parser(self):
+        text = format_history_and_query("StadtRAD", [("user", "Wie viele?"), ("assistant", "Welche meinen Sie?")])
+
+        assert text.startswith("Chat History: [")
+        assert text.endswith(" Current Question: StadtRAD")
+        history = json.loads(text[len("Chat History: ") : text.index(" Current Question:")])
+        assert history == [
+            {"role": "user", "content": "Wie viele?"},
+            {"role": "assistant", "content": "Welche meinen Sie?"},
+        ]
+
+    def test_empty_history(self):
+        assert format_history_and_query("q", []) == "Chat History: [] Current Question: q"
+
+
+class TestUdpAnalysisClient:
+    def _client(self, handler, **settings):
+        return UdpAnalysisClient(
+            GeodataSettings(udp_agent_url="http://udp:1416/", **settings),
+            http_client=httpx.Client(transport=httpx.MockTransport(handler)),
+        )
+
+    def test_posts_query_with_map_layers_opt_in(self):
+        seen = {}
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            seen["url"] = str(request.url)
+            seen["form"] = parse_qs(request.content.decode())
+            return httpx.Response(200, json={"result": {"answer": "a", "map_layers": {}}})
+
+        result = self._client(handler).analyze("Wie viele?", [("user", "x"), ("assistant", "y")])
+
+        assert result.answer == "a"
+        assert seen["url"] == "http://udp:1416/udp_agent/run"
+        assert seen["form"]["include_map_layers"] == ["true"]
+        assert seen["form"]["query"][0].endswith("Current Question: Wie viele?")
+
+    def test_history_trimmed_to_setting(self):
+        seen = {}
+
+        def handler(request):
+            seen["query"] = parse_qs(request.content.decode())["query"][0]
+            return httpx.Response(200, json={"result": "a"})
+
+        history = [("user", f"m{i}") for i in range(10)]
+        self._client(handler, udp_agent_history_messages=2).analyze("q", history)
+
+        assert '"m8"' in seen["query"] and '"m9"' in seen["query"]
+        assert '"m7"' not in seen["query"]
+
+    def test_http_error_becomes_error_result(self):
+        result = self._client(lambda r: httpx.Response(500)).analyze("q")
+
+        assert result.answer is None
+        assert result.error
+
+    def test_timeout_becomes_error_result(self):
+        def handler(request):
+            raise httpx.ReadTimeout("timed out", request=request)
+
+        result = self._client(handler).analyze("q")
+
+        assert result.answer is None
+        assert "timed out" in result.error

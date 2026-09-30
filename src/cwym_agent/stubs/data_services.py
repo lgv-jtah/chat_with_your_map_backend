@@ -10,7 +10,14 @@ in the ``chatWithYourMap`` Masterportal addon frontend
 mode to this backend keeps the same demo experience.
 """
 
-from cwym_agent.geodata.types import ActionMatch, FilterResult, LayerMatch, LocationMatch
+from cwym_agent.geodata.types import (
+    ActionMatch,
+    AnalysisResult,
+    FilterResult,
+    LayerMatch,
+    LocationMatch,
+    ResultLayer,
+)
 
 
 # Very small, deterministic "knowledge base" standing in for the real
@@ -106,6 +113,29 @@ class StubDataServices:
             },
             number_matched=1,
             label=location.name if location else None,
+        )
+
+    def analyze(self, query: str, history=None) -> AnalysisResult:
+        return AnalysisResult(
+            answer="Im Bezirk Altona gibt es 2 StadtRAD-Stationen.",
+            layers=[
+                ResultLayer(
+                    key="stations_altona",
+                    label="StadtRAD-Stationen in Altona",
+                    role="result",
+                    features={
+                        "type": "FeatureCollection",
+                        "features": [
+                            {"type": "Feature", "geometry": {"type": "Point", "coordinates": [9.93, 53.55]}, "properties": {}},
+                            {"type": "Feature", "geometry": {"type": "Point", "coordinates": [9.95, 53.56]}, "properties": {}},
+                        ],
+                    },
+                    feature_count=2,
+                    total_features=2,
+                    geometry_type="Point",
+                    bbox=(9.93, 53.55, 9.95, 53.56),
+                )
+            ],
         )
 
     def detect_action(self, query: str) -> ActionMatch:

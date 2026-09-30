@@ -1,8 +1,8 @@
 """Shared sub-agent definitions.
 
-Single source of truth for the four sub-agents the pipeline can invoke
+Single source of truth for the sub-agents the pipeline can invoke
 (``location_extractor``, ``layer_resolver``, ``action_detector``,
-``filter_agent``): their names, human-readable descriptions and JSON
+``filter_agent``, ``udp_analysis``): their names, human-readable descriptions and JSON
 argument schema.
 
 This is used both by ``Qwen3Client.plan()`` (to build the ``tools=``
@@ -118,6 +118,33 @@ SUB_AGENTS: list[SubAgentSpec] = [
                 "query": {
                     "type": "string",
                     "description": "Die Nutzeranfrage oder der relevante Filteranteil davon.",
+                }
+            },
+            "required": ["query"],
+        },
+    ),
+    SubAgentSpec(
+        name="udp_analysis",
+        description=(
+            "Beantwortet ANALYTISCHE Fragen zu Hamburgs Geodaten mit einer echten "
+            "Datenanalyse der Urban Data Platform: Anzahlen ('Wie viele ...?'), "
+            "Summen, Flächen, Längen, größte/kleinste, nächstgelegene, Dichte, "
+            "Vergleiche zwischen Gebieten. Beispiel: 'Wie viele StadtRAD-Stationen "
+            "gibt es in Altona?'. Zeigt das Ergebnis auch auf der Karte. Dauert 1-3 "
+            "Minuten. NICHT verwenden zum bloßen Anzeigen, Filtern oder Navigieren - "
+            "dafür gibt es die anderen Werkzeuge. Wenn du udp_analysis aufrufst, rufe "
+            "KEIN anderes Werkzeug auf. Auch verwenden, wenn der Nutzer auf eine "
+            "Rückfrage aus einer vorherigen Analyse antwortet."
+        ),
+        parameters={
+            "type": "object",
+            "properties": {
+                "query": {
+                    "type": "string",
+                    "description": (
+                        "Die Frage des Nutzers, wörtlich und vollständig - bei einer "
+                        "Antwort auf eine Rückfrage die Antwort des Nutzers."
+                    ),
                 }
             },
             "required": ["query"],

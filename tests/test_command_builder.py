@@ -2,7 +2,15 @@
 
 from cwym_agent.components.command_builder import CommandBuilderComponent
 from cwym_agent.geodata.conversation_context import ConversationContext, FilterStateIn, MapStateIn
-from cwym_agent.geodata.types import ActionMatch, FilterCondition, FilterResult, LayerMatch, LocationMatch
+from cwym_agent.geodata.types import (
+    ActionMatch,
+    AnalysisResult,
+    FilterCondition,
+    FilterResult,
+    LayerMatch,
+    LocationMatch,
+    ResultLayer,
+)
 
 _WANDSBEK_BOUNDARY = {
     "type": "Polygon",
@@ -394,3 +402,76 @@ class TestClearFilter:
         commands = builder._build_commands(aggregated, _filtered_context("1732"))
 
         assert [cmd["type"] for cmd in commands] == ["ACTIVATE_LAYER"]
+
+
+def _result_layer(key, role, bbox=None):
+    return ResultLayer(
+        key=key,
+        label=key,
+        role=role,
+        features={"type": "FeatureCollection", "features": [{"type": "Feature"}]},
+        feature_count=1,
+        total_features=1,
+        bbox=bbox,
+    )
+
+
+class TestAnalysisCommands:
+    """UDP agent analysis turns - cmym-agent-architecture.md Section 13."""
+
+    def test_clears_then_adds_context_before_result_then_zooms(self):
+        analysis = AnalysisResult(
+            answer="a",
+            layers=[
+                _result_layer("stations", "result", (9.93, 53.55, 9.95, 53.56)),
+                _result_layer("altona", "context", (9.8, 53.5, 10.0, 53.6)),
+            ],
+        )
+        aggregated = {**_aggregated(None), "analysis_result": analysis}
+
+        commands = builder._build_commands(aggregated)
+
+        assert [cmd["type"] for cmd in commands] == [
+            "CLEAR_RESULT_LAYERS",
+            "ADD_RESULT_LAYER",
+            "ADD_RESULT_LAYER",
+            "ZOOM_TO_EXTENT",
+        ]
+        assert [cmd["payload"]["layerKey"] for cmd in commands[1:3]] == ["altona", "stations"]
+        assert commands[2]["payload"]["role"] == "result"
+        assert commands[2]["payload"]["features"]["type"] == "FeatureCollection"
+        assert tuple(commands[3]["payload"]["bbox"]) == (9.8, 53.5, 10.0, 53.6)
+
+    def test_single_point_extent_padded(self):
+        analysis = AnalysisResult(answer="a", layers=[_result_layer("s", "result", (9.93, 53.55, 9.93, 53.55))])
+
+        commands = builder._build_commands({**_aggregated(None), "analysis_result": analysis})
+
+        min_x, min_y, max_x, max_y = commands[-1]["payload"]["bbox"]
+        assert max_x - min_x >= 0.0099 and max_y - min_y >= 0.0099
+        assert (min_x + max_x) / 2 == 9.93
+
+    def test_no_bbox_means_no_zoom(self):
+        analysis = AnalysisResult(answer="a", layers=[_result_layer("s", "result")])
+
+        commands = builder._build_commands({**_aggregated(None), "analysis_result": analysis})
+
+        assert [cmd["type"] for cmd in commands] == ["CLEAR_RESULT_LAYERS", "ADD_RESULT_LAYER"]
+
+    def test_no_layers_builds_nothing_and_keeps_previous_result(self):
+        """A clarifying question or a failed analysis must not wipe the map."""
+
+        for analysis in (AnalysisResult(answer="Welche meinen Sie?"), AnalysisResult(answer=None, error="x")):
+            assert builder._build_commands({**_aggregated("Zeigen", layer=_LAYER), "analysis_result": analysis}) == []
+
+    def test_analysis_takes_precedence_over_filter_and_show(self):
+        filter_result = FilterResult(layer_id="27714", features=_FEATURES, number_matched=1)
+        analysis = AnalysisResult(answer="a", layers=[_result_layer("s", "result")])
+        aggregated = {
+            **_aggregated("Zeigen", layer=_LAYER, filter_result=filter_result),
+            "analysis_result": analysis,
+        }
+
+        types = [cmd["type"] for cmd in builder._build_commands(aggregated)]
+
+        assert types == ["CLEAR_RESULT_LAYERS", "ADD_RESULT_LAYER"]

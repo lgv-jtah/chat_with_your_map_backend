@@ -8,7 +8,8 @@ of the matching AG-UI ``TOOL_CALL_RESULT`` event.
 
 ``ACTIVATE_LAYER``, ``DEACTIVATE_LAYER``, ``NAVIGATE_TO_LOCATION``,
 ``ZOOM_TO_EXTENT``, ``DRAW_BOUNDARY``, ``APPLY_FILTER`` (see Section 9),
-``CLEAR_FILTER`` and ``OPEN_TOOL`` are actually built by
+``CLEAR_FILTER``, ``ADD_RESULT_LAYER``, ``CLEAR_RESULT_LAYERS`` and
+``OPEN_TOOL`` are actually built by
 ``CommandBuilderComponent`` today - the other types are modeled here
 for closed-enum completeness (so the frontend dispatcher has a real
 schema to switch on) but nothing in the pipeline constructs them yet:
@@ -37,6 +38,12 @@ command rather than a DEACTIVATE_LAYER convention, since the overlay
 isn't a catalog layer and the frontend's filter state has to be cleared
 along with it. It never restores the full layer by itself -
 ``CommandBuilderComponent`` pairs it with an ``ACTIVATE_LAYER``.
+
+``ADD_RESULT_LAYER`` carries one layer of a UDP agent analysis (Section
+13) as another ad-hoc GeoJSON overlay. Unlike the single filter overlay,
+an analysis usually has several (the result plus the area it was
+restricted to), so each is keyed by ``layerKey``, and a new analysis
+starts with ``CLEAR_RESULT_LAYERS`` to remove the previous one's.
 """
 
 from typing import Annotated, Any, Literal, Union
@@ -160,6 +167,25 @@ class ClearFilterPayload(_CamelModel):
     the frontend should drop - the same id APPLY_FILTER carried."""
 
 
+class AddResultLayerPayload(_CamelModel):
+    layer_key: str
+    label: str
+    role: Literal["result", "context"]
+    """"result": the features that answer the question, drawn prominently.
+    "context": reference geometry (e.g. the district the analysis was
+    restricted to), drawn as an outline underneath."""
+    features: dict
+    """A GeoJSON FeatureCollection (WGS84)."""
+    feature_count: int
+    total_features: int
+    truncated: bool = False
+    geometry_type: str | None = None
+
+
+class ClearResultLayersPayload(_CamelModel):
+    pass
+
+
 class OpenToolPayload(_CamelModel):
     tool_name: Literal["PRINT", "LEGEND", "SHARE", "ABOUT", "CONTACT"]
     prefill: OpenToolPrefill | None = None
@@ -221,6 +247,16 @@ class ClearFilterCommand(_MapCommandBase):
     payload: ClearFilterPayload
 
 
+class AddResultLayerCommand(_MapCommandBase):
+    type: Literal["ADD_RESULT_LAYER"] = "ADD_RESULT_LAYER"
+    payload: AddResultLayerPayload
+
+
+class ClearResultLayersCommand(_MapCommandBase):
+    type: Literal["CLEAR_RESULT_LAYERS"] = "CLEAR_RESULT_LAYERS"
+    payload: ClearResultLayersPayload = ClearResultLayersPayload()
+
+
 class OpenToolCommand(_MapCommandBase):
     type: Literal["OPEN_TOOL"] = "OPEN_TOOL"
     payload: OpenToolPayload
@@ -242,6 +278,8 @@ MapCommand = Annotated[
         ClearHighlightsCommand,
         ApplyFilterCommand,
         ClearFilterCommand,
+        AddResultLayerCommand,
+        ClearResultLayersCommand,
         OpenToolCommand,
         SetLanguageCommand,
     ],

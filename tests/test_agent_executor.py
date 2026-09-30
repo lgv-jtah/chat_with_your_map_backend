@@ -9,9 +9,17 @@ layer/location results.
 from ag_ui.core import RunAgentInput, UserMessage
 
 from cwym_agent.components.agent_executor import AgentExecutorComponent
-from cwym_agent.geodata.conversation_context import build_context
+from cwym_agent.geodata.conversation_context import ConversationContext, MapStateIn, build_context
 from cwym_agent.geodata.portal_catalog_resolver import LayerCatalog
-from cwym_agent.geodata.types import ActionMatch, FilterCondition, FilterResult, LayerMatch, LocationMatch
+from cwym_agent.geodata.types import (
+    ActionMatch,
+    AnalysisResult,
+    FilterCondition,
+    FilterResult,
+    LayerMatch,
+    LocationMatch,
+    ResultLayer,
+)
 
 
 class FakeDataServices:
@@ -20,6 +28,7 @@ class FakeDataServices:
         self.resolve_locations_calls: list = []
         self.detect_action_calls: list = []
         self.apply_filter_calls: list = []
+        self.analyze_calls: list = []
 
     def resolve_locations(self, query: str):
         self.resolve_locations_calls.append(query)
@@ -32,6 +41,22 @@ class FakeDataServices:
     def detect_action(self, query: str):
         self.detect_action_calls.append(query)
         return ActionMatch("Zeigen", 0.85)
+
+    def analyze(self, query: str, history=None):
+        self.analyze_calls.append((query, history))
+        return AnalysisResult(
+            answer="19 Stationen.",
+            layers=[
+                ResultLayer(
+                    key="stations",
+                    label="Stationen",
+                    role="result",
+                    features={"type": "FeatureCollection", "features": [{"type": "Feature"}]},
+                    feature_count=1,
+                    total_features=1,
+                )
+            ],
+        )
 
     def apply_filter(self, query: str, layer, location=None, mode="replace", prior_conditions=None):
         self.apply_filter_calls.append((query, layer, location, mode, prior_conditions))
@@ -302,3 +327,36 @@ class TestFilterAgentToolCallResultView:
         assert name == "layer_resolver"
         assert emitted == {"name": "Some Layer", "layer_id": "1", "confidence": 0.9, "description": "",
                             "typ": None, "url": None, "collection": None}
+
+
+class TestUdpAnalysisDispatch:
+    def test_passes_query_and_conversation_history(self):
+        data_services = FakeDataServices()
+        component = AgentExecutorComponent(data_services=data_services)
+        context = ConversationContext(
+            map_state=MapStateIn(), history=[("user", "Wie viele?"), ("assistant", "Welche meinen Sie?")]
+        )
+
+        component.run(_plan("udp_analysis"), context=context)
+
+        assert data_services.analyze_calls == [
+            ("test", [("user", "Wie viele?"), ("assistant", "Welche meinen Sie?")])
+        ]
+
+    def test_no_context_means_empty_history(self):
+        data_services = FakeDataServices()
+
+        AgentExecutorComponent(data_services=data_services).run(_plan("udp_analysis"))
+
+        assert data_services.analyze_calls == [("test", [])]
+
+    def test_tool_call_result_leaves_out_layer_features(self):
+        bridge = FakeBridge()
+
+        AgentExecutorComponent(data_services=FakeDataServices()).run(_plan("udp_analysis"), bridge=bridge)
+
+        [(name, _, result)] = bridge.tool_calls
+        assert name == "udp_analysis"
+        assert result["answer"] == "19 Stationen."
+        assert result["layers"][0]["feature_count"] == 1
+        assert "features" not in result["layers"][0]

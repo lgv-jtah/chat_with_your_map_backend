@@ -117,3 +117,36 @@ class FilterResult:
     query (post-merge on a refine turn) - echoed back as
     ApplyFilterPayload.filterSpec.conditions so a later refinement has
     something to merge against."""
+
+
+@dataclass
+class ResultLayer:
+    """One map layer the UDP agent published for an analysis
+    (cmym-agent-architecture.md Section 13): a GeoJSON FeatureCollection
+    in WGS84 plus what it shows."""
+
+    key: str
+    label: str
+    role: str
+    """"result" (the features that answer the question) or "context"
+    (reference geometry such as the district the analysis was
+    restricted to)."""
+    features: dict
+    feature_count: int
+    total_features: int
+    truncated: bool = False
+    geometry_type: str | None = None
+    bbox: tuple[float, float, float, float] | None = None
+
+
+@dataclass
+class AnalysisResult:
+    """The UDP agent's answer to an analytical question, ready for
+    TextResponseComponent (answer, streamed verbatim) and
+    CommandBuilderComponent (layers)."""
+
+    answer: str | None
+    layers: list[ResultLayer] = field(default_factory=list)
+    error: str | None = None
+    """Set when the UDP agent couldn't be reached or failed - answer is
+    then None."""

@@ -37,7 +37,14 @@ from cwym_agent.geodata.address_resolver import AddressResolver
 from cwym_agent.geodata.filter_agent import FilterAgent
 from cwym_agent.geodata.layer_search import LayerSearchService
 from cwym_agent.geodata.settings import GeodataSettings
-from cwym_agent.geodata.types import ActionMatch, FilterResult, LayerMatch, LocationMatch
+from cwym_agent.geodata.types import (
+    ActionMatch,
+    AnalysisResult,
+    FilterResult,
+    LayerMatch,
+    LocationMatch,
+)
+from cwym_agent.geodata.udp_analysis import UdpAnalysisClient
 from cwym_agent.llm.qwen3_client import Qwen3Client
 
 logger = logging.getLogger(__name__)
@@ -137,12 +144,14 @@ class RealDataServices:
         layer_search: LayerSearchService | None = None,
         filter_agent: FilterAgent | None = None,
         llm: Any | None = None,
+        udp_analysis: UdpAnalysisClient | None = None,
     ):
         self.settings = settings or GeodataSettings()
         self.address_resolver = address_resolver or AddressResolver(self.settings)
         self.layer_search = layer_search or LayerSearchService(self.settings)
         self.llm = llm if llm is not None else Qwen3Client()
         self.filter_agent = filter_agent or FilterAgent(self.settings, llm=self.llm)
+        self.udp_analysis = udp_analysis or UdpAnalysisClient(self.settings)
 
     def warm_up(self) -> None:
         """Eagerly build the layer search index.
@@ -257,6 +266,11 @@ class RealDataServices:
             return None
 
         return candidates[index - 1]
+
+    def analyze(self, query: str, history: list[tuple[str, str]] | None = None) -> AnalysisResult:
+        """An analytical question for the UDP agent (Section 13)."""
+
+        return self.udp_analysis.analyze(query, history)
 
     def apply_filter(
         self,

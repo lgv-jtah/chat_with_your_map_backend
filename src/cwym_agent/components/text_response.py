@@ -21,6 +21,11 @@ component narrates from.
 Also takes conversation context (Section 10) so a follow-up reply can
 refer to what's already on the map ("von den angezeigten Schulen ...")
 instead of describing it as something brand new.
+
+A UDP analysis turn (Section 13) skips the LLM entirely: the UDP agent's
+own answer is passed through verbatim. Its numbers come from a real
+analysis, and a rewording model is exactly where "19 Stationen" could
+become "rund 20". If the UDP agent failed, a fixed message says so.
 """
 
 import uuid
@@ -50,6 +55,15 @@ class TextResponseComponent:
         layer_catalog: LayerCatalog | None = None,
         bridge: AGUIEventBridge | None = None,
     ):
+        verbatim = self._analysis_reply(aggregated.get("analysis_result"))
+        if verbatim is not None:
+            if bridge:
+                message_id = str(uuid.uuid4())
+                bridge.emit(TextMessageStartEvent(message_id=message_id))
+                bridge.emit(TextMessageContentEvent(message_id=message_id, delta=verbatim))
+                bridge.emit(TextMessageEndEvent(message_id=message_id))
+            return {"response_text": verbatim}
+
         prompt = self._build_response_prompt(aggregated, query, commands or [], context, layer_catalog)
 
         if bridge:
@@ -69,6 +83,18 @@ class TextResponseComponent:
             response_text = self.llm.generate(prompt, label="text_response")
 
         return {"response_text": response_text}
+
+    @staticmethod
+    def _analysis_reply(analysis) -> str | None:
+        if analysis is None:
+            return None
+        if analysis.answer:
+            return analysis.answer
+        return (
+            "Die Datenanalyse der Urban Data Platform hat gerade keine Antwort "
+            "geliefert, die Karte wurde nicht verändert. Bitte versuche es in ein "
+            "paar Minuten noch einmal."
+        )
 
     def _build_response_prompt(
         self,
