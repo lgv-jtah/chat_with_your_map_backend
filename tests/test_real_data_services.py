@@ -13,7 +13,8 @@ import json
 
 import httpx2
 
-from cwym_agent.geodata.real_data_services import _HAMBURG_EXTENT, RealDataServices
+from cwym_agent.geodata.real_data_services import RealDataServices
+from cwym_agent.geodata.types import HAMBURG_EXTENT
 from cwym_agent.geodata.types import ActionMatch, LayerMatch, LocationMatch
 from cwym_agent.llm.qwen3_client import Qwen3Client
 from cwym_agent.settings import Qwen3Settings
@@ -178,7 +179,7 @@ class TestResolveLocations:
 
         result = service.resolve_locations("Hamburg")
 
-        assert result == [LocationMatch("Hamburg", 53.5511, 9.9937, 0.9, extent=_HAMBURG_EXTENT)]
+        assert result == [LocationMatch("Hamburg", 53.5511, 9.9937, 0.9, extent=HAMBURG_EXTENT)]
         assert address_resolver.queries == []
 
     def test_resolved_match_is_returned(self):
@@ -198,7 +199,7 @@ class TestResolveLocations:
 
         result = service.resolve_locations("kompletter nonsens")
 
-        assert result == [LocationMatch("Hamburg", 53.5511, 9.9937, 0.9, extent=_HAMBURG_EXTENT)]
+        assert result == [LocationMatch("Hamburg", 53.5511, 9.9937, 0.9, extent=HAMBURG_EXTENT)]
 
 
 class TestDetectAction:

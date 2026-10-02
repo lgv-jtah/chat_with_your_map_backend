@@ -21,7 +21,7 @@ import logging
 import httpx
 
 from cwym_agent.geodata.settings import GeodataSettings
-from cwym_agent.geodata.types import AnalysisResult, ResultLayer
+from cwym_agent.geodata.types import HAMBURG_EXTENT, AnalysisResult, ResultLayer
 
 logger = logging.getLogger(__name__)
 
@@ -37,6 +37,49 @@ def format_history_and_query(query: str, history: list[tuple[str, str]]) -> str:
     return f"Chat History: {json.dumps(messages, ensure_ascii=False)} Current Question: {query}"
 
 
+def _positions(coordinates):
+    """Every [x, y, ...] position in a GeoJSON ``coordinates`` array,
+    whatever its nesting depth (Point through MultiPolygon)."""
+
+    if not isinstance(coordinates, list) or not coordinates:
+        return
+    if isinstance(coordinates[0], (int, float)):
+        yield coordinates
+        return
+    for item in coordinates:
+        yield from _positions(item)
+
+
+def _bbox_within(feature_list: list, extent: tuple[float, float, float, float]):
+    """The layer's bbox, computed from its own coordinates rather than
+    trusting the UDP agent's ``bbox`` field - and only from positions
+    inside ``extent``. Found live: Hamburg's StadtRAD dataset has a
+    station at [0, 0] ("Bahnhof Dammtor"), so a buffer-around-stations
+    analysis published a polygon at Null Island and the union bbox ran
+    from the Gulf of Guinea to Hamburg - ZOOM_TO_EXTENT then left the
+    map showing nothing useful. Out-of-extent geometry is still drawn,
+    it just doesn't drive the zoom."""
+
+    min_x, min_y, max_x, max_y = extent
+    xs: list[float] = []
+    ys: list[float] = []
+    for feature in feature_list:
+        geometry = feature.get("geometry") if isinstance(feature, dict) else None
+        if not isinstance(geometry, dict):
+            continue
+        for position in _positions(geometry.get("coordinates")):
+            try:
+                x, y = float(position[0]), float(position[1])
+            except (IndexError, TypeError, ValueError):
+                continue
+            if min_x <= x <= max_x and min_y <= y <= max_y:
+                xs.append(x)
+                ys.append(y)
+    if not xs:
+        return None
+    return (min(xs), min(ys), max(xs), max(ys))
+
+
 def _parse_layer(key: str, raw) -> ResultLayer | None:
     if not isinstance(raw, dict):
         return None
@@ -47,14 +90,7 @@ def _parse_layer(key: str, raw) -> ResultLayer | None:
     if not isinstance(feature_list, list) or not feature_list:
         return None
 
-    bbox = raw.get("bbox")
-    try:
-        bbox = tuple(float(v) for v in bbox) if bbox is not None else None
-    except (TypeError, ValueError):
-        bbox = None
-    if bbox is not None and len(bbox) != 4:
-        bbox = None
-
+    bbox = _bbox_within(feature_list, HAMBURG_EXTENT)
     role = raw.get("role") if raw.get("role") in _ROLES else "result"
     return ResultLayer(
         key=str(key),

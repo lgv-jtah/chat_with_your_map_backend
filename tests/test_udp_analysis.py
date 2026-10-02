@@ -4,6 +4,7 @@ import json
 from urllib.parse import parse_qs
 
 import httpx
+import pytest
 
 from cwym_agent.geodata.settings import GeodataSettings
 from cwym_agent.geodata.udp_analysis import UdpAnalysisClient, format_history_and_query, parse_response
@@ -65,12 +66,47 @@ class TestParseResponse:
 
         assert [layer.key for layer in result.layers] == ["ok"]
 
-    def test_unknown_role_falls_back_to_result_and_bad_bbox_to_none(self):
-        [layer] = parse_response(
-            {"result": {"answer": "a", "map_layers": {"k": _layer(role="highlight", bbox=[1, 2])}}}
-        ).layers
+    def test_unknown_role_falls_back_to_result(self):
+        [layer] = parse_response({"result": {"answer": "a", "map_layers": {"k": _layer(role="highlight")}}}).layers
 
         assert layer.role == "result"
+
+    def test_bbox_derived_from_features_not_the_udp_field(self):
+        [layer] = parse_response({"result": {"answer": "a", "map_layers": {"k": _layer(bbox=[1, 2])}}}).layers
+
+        assert layer.bbox == (9.93, 53.55, 9.93, 53.55)
+
+    def test_out_of_extent_geometry_ignored_for_bbox(self):
+        """Hamburg's StadtRAD data has a station at [0, 0]; its 200m
+        buffer must not stretch the zoom extent to Null Island."""
+
+        def ring(cx, cy, d=0.002):
+            return [[[cx - d, cy - d], [cx + d, cy - d], [cx + d, cy + d], [cx - d, cy - d]]]
+
+        union = {
+            "type": "FeatureCollection",
+            "features": [
+                {
+                    "type": "Feature",
+                    "geometry": {"type": "MultiPolygon", "coordinates": [ring(0.0, 0.0), ring(9.99, 53.56)]},
+                    "properties": {},
+                }
+            ],
+        }
+        [layer] = parse_response(
+            {"result": {"answer": "a", "map_layers": {"k": _layer(features=union, bbox=[-0.002, -0.002, 9.992, 53.562])}}}
+        ).layers
+
+        assert layer.bbox == pytest.approx((9.988, 53.558, 9.992, 53.562))
+        assert len(layer.features["features"][0]["geometry"]["coordinates"]) == 2
+
+    def test_no_in_extent_geometry_means_no_bbox(self):
+        null_island = {
+            "type": "FeatureCollection",
+            "features": [{"type": "Feature", "geometry": {"type": "Point", "coordinates": [0.0, 0.0]}, "properties": {}}],
+        }
+        [layer] = parse_response({"result": {"answer": "a", "map_layers": {"k": _layer(features=null_island)}}}).layers
+
         assert layer.bbox is None
 
     def test_unexpected_shape_is_an_error(self):
