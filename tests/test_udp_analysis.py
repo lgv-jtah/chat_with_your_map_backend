@@ -181,3 +181,88 @@ class TestUdpAnalysisClient:
 
         assert result.answer is None
         assert "timed out" in result.error
+
+
+def _square(cx, cy, d=0.002, hole=False):
+    ring = [[cx - d, cy - d], [cx + d, cy - d], [cx + d, cy + d], [cx - d, cy + d], [cx - d, cy - d]]
+    rings = [ring]
+    if hole:
+        h = d / 2
+        rings.append([[cx - h, cy - h], [cx + h, cy - h], [cx + h, cy + h], [cx - h, cy + h], [cx - h, cy - h]])
+    return {"type": "Polygon", "coordinates": rings}
+
+
+def _fc(*geometries):
+    return {
+        "type": "FeatureCollection",
+        "features": [{"type": "Feature", "geometry": g, "properties": {"i": i}} for i, g in enumerate(geometries)],
+    }
+
+
+def _point(x, y):
+    return {"type": "Point", "coordinates": [x, y]}
+
+
+def _parse(result_fc, context_fc):
+    return parse_response(
+        {
+            "result": {
+                "answer": "a",
+                "map_layers": {
+                    "buffers": _layer(role="context", features=context_fc),
+                    "schools": _layer(role="result", features=result_fc),
+                },
+            }
+        }
+    ).layers
+
+
+class TestContextSafetyNet:
+    """A proximity analysis can publish a buffer around every reference
+    feature as context; only the buffers with a result inside are kept."""
+
+    def test_drops_context_polygons_without_a_result(self):
+        layers = _parse(
+            _fc(_point(9.95, 53.55)),
+            _fc(_square(9.95, 53.55), _square(10.05, 53.60), _square(10.10, 53.50)),
+        )
+
+        context = next(layer for layer in layers if layer.role == "context")
+        assert [f["properties"]["i"] for f in context.features["features"]] == [0]
+        assert context.feature_count == 1
+        assert context.bbox == pytest.approx((9.948, 53.548, 9.952, 53.552))
+
+    def test_multipolygon_kept_if_any_part_contains_a_result(self):
+        multi = {"type": "MultiPolygon", "coordinates": [_square(10.10, 53.50)["coordinates"], _square(9.95, 53.55)["coordinates"]]}
+        layers = _parse(_fc(_point(9.95, 53.55)), _fc(multi, _square(10.05, 53.60)))
+
+        context = next(layer for layer in layers if layer.role == "context")
+        assert context.feature_count == 1
+
+    def test_result_in_a_hole_does_not_count(self):
+        layers = _parse(_fc(_point(9.95, 53.55)), _fc(_square(9.95, 53.55, hole=True), _square(9.95, 53.551)))
+
+        context = next(layer for layer in layers if layer.role == "context")
+        assert [f["properties"]["i"] for f in context.features["features"]] == [1]
+
+    def test_layer_untouched_if_no_polygon_contains_a_result(self):
+        """E.g. a district boundary with the results just outside it."""
+
+        context_fc = _fc(_square(10.05, 53.60), _square(10.10, 53.50))
+        layers = _parse(_fc(_point(9.95, 53.55)), context_fc)
+
+        context = next(layer for layer in layers if layer.role == "context")
+        assert context.feature_count == 2
+
+    def test_point_context_left_alone(self):
+        layers = _parse(_fc(_point(9.95, 53.55)), _fc(_point(10.05, 53.60), _point(10.10, 53.50)))
+
+        context = next(layer for layer in layers if layer.role == "context")
+        assert context.feature_count == 2
+
+    def test_no_result_layer_means_no_filtering(self):
+        [context] = parse_response(
+            {"result": {"answer": "a", "map_layers": {"b": _layer(role="context", features=_fc(_square(10.05, 53.60)))}}}
+        ).layers
+
+        assert context.feature_count == 1
