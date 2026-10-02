@@ -95,8 +95,10 @@ class AGUIEventBridge:
 
     # -- tool calls (sub-agent invocations) ----------------------------
 
-    def tool_call(self, name: str, args: dict, result) -> str:
-        """Emit a full start/args/end/result sequence for one sub-agent call.
+    def tool_call_start(self, name: str, args: dict) -> str:
+        """Emit start/args/end for a sub-agent call that is about to run,
+        so the frontend can show it as in progress - a UDP analysis takes
+        minutes. Pair with ``tool_call_result`` once it returns.
 
         Returns the generated tool_call_id.
         """
@@ -105,6 +107,11 @@ class AGUIEventBridge:
         self.emit(ToolCallStartEvent(tool_call_id=call_id, tool_call_name=name))
         self.emit(ToolCallArgsEvent(tool_call_id=call_id, delta=json.dumps(args)))
         self.emit(ToolCallEndEvent(tool_call_id=call_id))
+        return call_id
+
+    def tool_call_result(self, call_id: str, result) -> None:
+        """Emit the result of a sub-agent call opened by ``tool_call_start``."""
+
         self.emit(
             ToolCallResultEvent(
                 message_id=str(uuid.uuid4()),
@@ -112,6 +119,16 @@ class AGUIEventBridge:
                 content=json.dumps(result, default=str),
             )
         )
+
+    def tool_call(self, name: str, args: dict, result) -> str:
+        """Emit a full start/args/end/result sequence for one sub-agent
+        call whose result is already known.
+
+        Returns the generated tool_call_id.
+        """
+
+        call_id = self.tool_call_start(name, args)
+        self.tool_call_result(call_id, result)
         return call_id
 
     # -- map commands -----------------------------------------------------

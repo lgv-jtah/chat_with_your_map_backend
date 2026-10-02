@@ -112,14 +112,19 @@ class AgentExecutorComponent:
         for step in _dependencies_first(plan_json.get("steps", [])):
             agent_name = step["agent_name"]
             args = step.get("args", {})
+            # START goes out before the sub-agent runs, not together with
+            # its result afterwards - otherwise the chat can only show a
+            # step once it's already done (a UDP analysis: minutes of
+            # nothing, then the step appearing complete).
+            call_id = bridge.tool_call_start(agent_name, args) if bridge else None
             result = self._run_sub_agent(
                 agent_name, args, allowed_layer_ids, results_by_agent, context, layer_catalog
             )
             results_by_agent[agent_name] = result
 
             if bridge:
-                bridge.tool_call(
-                    agent_name, args, _tool_call_result_view(agent_name, _serializable(result))
+                bridge.tool_call_result(
+                    call_id, _tool_call_result_view(agent_name, _serializable(result))
                 )
 
             execution_log.append({"agent_name": agent_name, "result": result})

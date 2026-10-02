@@ -70,8 +70,18 @@ def _plan(*agent_names: str) -> dict:
 class FakeBridge:
     def __init__(self):
         self.tool_calls: list = []
+        self.events: list = []
+        self._open: dict = {}
 
-    def tool_call(self, name, args, result):
+    def tool_call_start(self, name, args):
+        call_id = f"call-{len(self._open)}"
+        self._open[call_id] = (name, args)
+        self.events.append(("start", name))
+        return call_id
+
+    def tool_call_result(self, call_id, result):
+        name, args = self._open[call_id]
+        self.events.append(("result", name))
         self.tool_calls.append((name, args, result))
 
 
@@ -360,3 +370,29 @@ class TestUdpAnalysisDispatch:
         assert result["answer"] == "19 Stationen."
         assert result["layers"][0]["feature_count"] == 1
         assert "features" not in result["layers"][0]
+
+
+class TestToolCallStreaming:
+    def test_start_emitted_before_the_sub_agent_runs(self):
+        """The chat shows a step as running from its TOOL_CALL_START - so
+        it must go out before a (possibly minutes-long) sub-agent call,
+        not together with the result afterwards."""
+
+        bridge = FakeBridge()
+
+        class RecordingDataServices(FakeDataServices):
+            def resolve_layer(self, query, allowed_layer_ids=None):
+                bridge.events.append(("running", "layer_resolver"))
+                return super().resolve_layer(query, allowed_layer_ids)
+
+        AgentExecutorComponent(data_services=RecordingDataServices()).run(
+            _plan("location_extractor", "layer_resolver"), bridge=bridge
+        )
+
+        assert bridge.events == [
+            ("start", "location_extractor"),
+            ("result", "location_extractor"),
+            ("start", "layer_resolver"),
+            ("running", "layer_resolver"),
+            ("result", "layer_resolver"),
+        ]
