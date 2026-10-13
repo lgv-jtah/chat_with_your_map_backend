@@ -121,6 +121,36 @@ class TestBuildCommands:
         assert commands[0]["payload"]["toolName"] == "CONTACT"
 
 
+class TestOpenTool:
+    def test_zeigen_naming_a_tool_with_nothing_resolved_opens_it(self):
+        """"Zeig mir die Legende" detects as Zeigen (no "öffne"), and the
+        planner resolves no layer/location for it."""
+
+        aggregated = _aggregated("Zeigen", query="Zeig mir die Legende")
+
+        commands = builder._build_commands(aggregated)
+
+        assert [cmd["type"] for cmd in commands] == ["OPEN_TOOL"]
+        assert commands[0]["payload"]["toolName"] == "LEGEND"
+
+    def test_zeigen_with_resolved_layer_stays_a_map_request(self):
+        aggregated = _aggregated("Zeigen", layer=_LAYER, query="Zeige Teile von Altona")
+
+        commands = builder._build_commands(aggregated)
+
+        assert [cmd["type"] for cmd in commands] == ["ACTIVATE_LAYER"]
+
+    def test_tool_keywords_match_whole_words_only(self):
+        aggregated = _aggregated("Öffne", query="Öffne die Stadtteile")
+
+        assert builder._build_commands(aggregated) == []
+
+    def test_zeigen_without_tool_or_anything_resolved_builds_nothing(self):
+        aggregated = _aggregated("Zeigen", query="Wie geht es dir?")
+
+        assert builder._build_commands(aggregated) == []
+
+
 class TestDeactivateLayer:
     """"zeige U-Bahn, aber nicht mehr Fahrradstationen" - Section 10.5
     rule 5."""

@@ -215,7 +215,7 @@ them, but no current backend code path sends them.
 | Filter / spatial restriction ("Fahrradstationen in Wandsbek", "nur Gymnasien") | (`DEACTIVATE_LAYER` if the layer is currently visible), `APPLY_FILTER`, (`ZOOM_TO_EXTENT`) |
 | Remove a filter ("zeig wieder alle") | `CLEAR_FILTER`, `ACTIVATE_LAYER` (same layer id) |
 | UDP analysis | `CLEAR_RESULT_LAYERS`, `ADD_RESULT_LAYER` × n (`context` layers first, then `result`), `ZOOM_TO_EXTENT` |
-| Open a tool ("öffne die Legende") | `OPEN_TOOL` |
+| Open a tool ("öffne die Legende", "Zeig mir die Legende", "Drucke die Karte") | `OPEN_TOOL` |
 | Small talk / unclear request | no commands, only the text answer |
 
 ### Shared types

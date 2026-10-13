@@ -53,8 +53,16 @@ manual zoom-out to see the city. ``ZOOM_TO_EXTENT`` fits the view to
 ``LocationMatch.extent`` right after, overriding that default with a
 properly city/district-scaled view, while ``NAVIGATE_TO_LOCATION``
 still does its own job (placing the marker).
+
+``OPEN_TOOL`` fires for an "Öffne" turn naming a portal tool, and also
+for a "Zeigen" turn that names one but resolved no layer and no
+location ("Zeig mir die Legende", "Drucke die Karte") - the keyword
+action detector only maps "öffne"/"open" to "Öffne", so these otherwise
+built nothing. A resolved layer or location wins: "Zeige Teile von
+Altona" is still a map request, not the Share panel.
 """
 
+import re
 import uuid
 
 from haystack import component
@@ -97,7 +105,7 @@ _ACTIONABLE_TYPES = {"Zeigen", "Navigieren"}
 # already used by action_detector (geodata/real_data_services.py). Not a
 # new sub-agent - just enough to pick which Menu panel "öffne ..." means.
 _TOOL_KEYWORDS: list[tuple[tuple[str, ...], str]] = [
-    (("kontakt", "contact"), "CONTACT"),
+    (("kontakt", "kontaktformular", "contact"), "CONTACT"),
     (("drucke", "drucken", "druck", "print"), "PRINT"),
     (("legende", "legend"), "LEGEND"),
     (("teile", "teilen", "share"), "SHARE"),
@@ -118,9 +126,11 @@ def _min_span(bbox: tuple[float, float, float, float]) -> tuple[float, float, fl
 
 
 def _detect_tool_name(query: str) -> str | None:
+    # Whole words only: a plain substring check matched "teile" inside
+    # "Stadtteile" (-> SHARE) and "druck" inside "Luftdruck" (-> PRINT).
     lowered = query.lower()
     for keywords, tool_name in _TOOL_KEYWORDS:
-        if any(keyword in lowered for keyword in keywords):
+        if any(re.search(rf"\b{re.escape(keyword)}\b", lowered) for keyword in keywords):
             return tool_name
     return None
 
@@ -163,16 +173,18 @@ class CommandBuilderComponent:
 
         commands, restored_layer_ids = self._build_clear_filter_commands(action, context)
 
-        if action.action_type == "Öffne":
+        nothing_resolved = not aggregated.get("layer") and not aggregated.get("locations")
+        if action.action_type == "Öffne" or (action.action_type == "Zeigen" and nothing_resolved):
             tool_name = _detect_tool_name(aggregated.get("query", ""))
-            if tool_name is None:
+            if tool_name is not None:
+                return commands + [
+                    OpenToolCommand(
+                        command_id=str(uuid.uuid4()),
+                        payload=OpenToolPayload(tool_name=tool_name),
+                    ).model_dump(by_alias=True)
+                ]
+            if action.action_type == "Öffne":
                 return commands
-            return commands + [
-                OpenToolCommand(
-                    command_id=str(uuid.uuid4()),
-                    payload=OpenToolPayload(tool_name=tool_name),
-                ).model_dump(by_alias=True)
-            ]
 
         if action.action_type not in _ACTIONABLE_TYPES:
             return commands
