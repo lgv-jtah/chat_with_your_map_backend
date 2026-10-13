@@ -75,6 +75,11 @@ Note: the endpoint path is `/api/query` (not `/query` as in the
 architecture doc's pseudocode), to match what the `chatWithYourMap`
 Masterportal addon frontend already calls.
 
+**Frontend integration:** see [`docs/frontend-api.md`](docs/frontend-api.md)
+for the request body, the AG-UI event stream, the MapCommand protocol
+and two end-to-end examples. Swagger (`/docs`) only covers the request
+body.
+
 ## Requirements
 
 - Python >= 3.12
