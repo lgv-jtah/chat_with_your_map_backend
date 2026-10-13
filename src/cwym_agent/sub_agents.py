@@ -64,7 +64,12 @@ SUB_AGENTS: list[SubAgentSpec] = [
         name="action_detector",
         description=(
             "Bestimmt, welche Kartenaktion der Nutzer möchte (z.B. "
-            "Navigieren, Filtern, Anzeigen/Öffnen einer Ebene)."
+            "Navigieren, Filtern, Anzeigen/Öffnen einer Ebene). Auch "
+            "aufrufen, wenn der Nutzer ein Werkzeug des Kartenportals "
+            "öffnen möchte: Kontaktformular, Drucken, Legende, Teilen "
+            "oder Impressum/Über uns (z.B. 'Öffne das Kontaktformular', "
+            "'Öffne die Legende') - das gehört zur Karte und ist kein "
+            "Small Talk."
         ),
         parameters={
             "type": "object",
