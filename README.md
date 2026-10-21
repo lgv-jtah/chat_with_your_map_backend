@@ -186,9 +186,14 @@ liveness check). Notes:
 - **Model cache:** downloaded embedding/reranker models persist in the
   `hf-cache` named volume, so only the first start downloads them.
 - **Proxy:** Docker injects the corporate proxy from `~/.docker/config.json`
-  into the container. `compose.yaml` sets `NO_PROXY` (from your shell, or
-  a default that includes the internal vLLM host `10.200.160.182`) so
-  vLLM traffic bypasses the proxy - otherwise the proxy answers 503.
+  into the container. `compose.yaml` sets `NO_PROXY` to include the internal
+  vLLM host `10.200.160.182` so vLLM traffic bypasses the proxy - otherwise
+  the proxy answers 503. Add any different vLLM host to both proxy variables
+  in `compose.yaml` as well.
+  Since this Compose service uses host networking, the Docker-only service
+  name `vllm` is not available to it. Use the host-published vLLM address
+  (`http://10.200.160.182:5555/v1` by default in the app) and keep that host
+  in `NO_PROXY`; the internal host `10.200.160.182` is appended automatically.
 
 ## Try it
 

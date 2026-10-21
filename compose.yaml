@@ -22,8 +22,8 @@ services:
       # ~/.docker/config.json injects the corporate proxy into containers
       # with a noProxy that lacks the internal vLLM host, so requests to it
       # would go via the proxy (503). Bypass it like the host shell does.
-      - NO_PROXY=${NO_PROXY:-localhost,127.0.0.1,10.200.160.182}
-      - no_proxy=${NO_PROXY:-localhost,127.0.0.1,10.200.160.182}
+      - NO_PROXY=localhost,127.0.0.1,10.200.160.182
+      - no_proxy=localhost,127.0.0.1,10.200.160.182
     volumes:
       # Persist downloaded embedding/reranker models across restarts.
       - hf-cache:/home/app/.cache/huggingface
