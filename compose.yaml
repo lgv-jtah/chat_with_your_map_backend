@@ -1,0 +1,40 @@
+services:
+  cwym-agent:
+    build: .
+    image: cwym-agent:latest
+    # Host networking (Linux) so the container sees the same "localhost" as
+    # `make run` does: the Masterportal frontend sends loopback portal URLs
+    # (https://localhost:9001/...), and the UDP agent defaults to
+    # localhost:1416. In a bridged network those would point at the
+    # container itself, and the SSRF guard rejects host.docker.internal's
+    # private IP. The app listens directly on host port 8082.
+    network_mode: host
+    # Optional local overrides for any CWYM_* setting (see README).
+    env_file:
+      - path: .env
+        required: false
+    # Passed through from the invoking shell when set (used by
+    # `make docker-up-offvpn`); left unset otherwise so app defaults apply.
+    environment:
+      - CWYM_QWEN3_BASE_URL
+      - CWYM_QWEN3_API_KEY
+      - CWYM_QWEN3_TIMEOUT
+      # ~/.docker/config.json injects the corporate proxy into containers
+      # with a noProxy that lacks the internal vLLM host, so requests to it
+      # would go via the proxy (503). Bypass it like the host shell does.
+      - NO_PROXY=${NO_PROXY:-localhost,127.0.0.1,10.200.160.182}
+      - no_proxy=${NO_PROXY:-localhost,127.0.0.1,10.200.160.182}
+    volumes:
+      # Persist downloaded embedding/reranker models across restarts.
+      - hf-cache:/home/app/.cache/huggingface
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8082/health', timeout=5)"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      # Startup warm-up fetches + embeds ~6,500 layers (several minutes).
+      start_period: 10m
+    restart: unless-stopped
+
+volumes:
+  hf-cache:

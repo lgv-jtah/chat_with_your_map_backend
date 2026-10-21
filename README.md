@@ -163,6 +163,33 @@ make test-live  # opt-in live tests against real Qwen3/geodata APIs
 make clean      # remove __pycache__/.pytest_cache
 ```
 
+## Docker
+
+```bash
+make docker-up          # build + start detached (docker compose up -d --build)
+make docker-up-offvpn   # same, but Qwen3 on IONOS (needs the local LiteLLM container)
+make docker-logs        # follow logs - startup warm-up takes a few minutes
+make docker-down        # stop + remove
+make docker-build       # build the image only
+```
+
+The service listens on `http://localhost:8082` (`GET /health` for a
+liveness check). Notes:
+
+- **Host networking** (`network_mode: host`, Linux): the frontend sends
+  loopback portal URLs (`https://localhost:9001/...`) and the UDP agent
+  defaults to `localhost:1416`, so the container must share the host's
+  `localhost`. A bridged network would break both (the SSRF guard
+  rejects `host.docker.internal`'s private IP).
+- **Settings:** put any `CWYM_*` overrides from the table above into an
+  (untracked) `.env` file next to `compose.yaml`.
+- **Model cache:** downloaded embedding/reranker models persist in the
+  `hf-cache` named volume, so only the first start downloads them.
+- **Proxy:** Docker injects the corporate proxy from `~/.docker/config.json`
+  into the container. `compose.yaml` sets `NO_PROXY` (from your shell, or
+  a default that includes the internal vLLM host `10.200.160.182`) so
+  vLLM traffic bypasses the proxy - otherwise the proxy answers 503.
+
 ## Try it
 
 ```bash
