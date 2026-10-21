@@ -25,6 +25,13 @@ simpler version of this module did) but per-layer metadata, because
 conversation-context follow-up, Section 10) without a fresh
 ``layer_resolver`` vector search to supply that metadata.
 
+**Inline mode (preferred).** The frontend may instead send the already
+merged layer list itself (``portal_context.layers``), built into a
+catalog by ``build_inline_catalog`` without any fetch. That is the only
+mode that works when the backend runs on a shared server that cannot
+reach the portal (e.g. a portal on a developer's ``localhost``). The
+URL mode below stays as a fallback for publicly hosted portals.
+
 Concurrent cold-start requests for the same ``(config_json_url,
 services_json_url)`` pair share one build via a per-key
 ``asyncio.Lock`` (single-flight) - cheap to add now that this fetch
@@ -100,6 +107,7 @@ import json
 import logging
 import time
 from asyncio import Lock
+from collections.abc import Iterable, Mapping
 from dataclasses import dataclass, field
 from urllib.parse import urlsplit
 
@@ -205,6 +213,34 @@ def _build_layer_catalog(config_json: dict, services_json) -> "LayerCatalog":
             collection=entry.get("collection"),
         )
     return LayerCatalog(layers)
+
+
+def build_inline_catalog(layers: Iterable[Mapping[str, object]]) -> "LayerCatalog":
+    """Builds a ``LayerCatalog`` from the layer list the frontend sent
+    inline (``portal_context.layers``) instead of from two fetched URLs.
+
+    The Masterportal has already merged config.json with services.json
+    in the browser (``allLayerConfigs``), so the frontend can send that
+    list directly - the backend then needs no network access to the
+    portal at all, which is what makes a shared backend usable with a
+    portal running on a developer's own ``localhost``. Each entry needs
+    an ``id``; ``name``/``typ``/``url``/``collection`` are optional and
+    produce the same ``LayerMatch`` records ``_build_layer_catalog``
+    does. Size/field validation happens at the API boundary
+    (``api.main.PortalLayer``) before this is called."""
+
+    result: dict[str, LayerMatch] = {}
+    for entry in layers:
+        layer_id = str(entry["id"])
+        result[layer_id] = LayerMatch(
+            name=entry.get("name") or layer_id,
+            layer_id=layer_id,
+            confidence=1.0,
+            typ=entry.get("typ"),
+            url=entry.get("url"),
+            collection=entry.get("collection"),
+        )
+    return LayerCatalog(result)
 
 
 @dataclass(frozen=True)

@@ -123,7 +123,9 @@ Qwen3Settings` and `cwym_agent.geodata.settings.GeodataSettings`):
 | `CWYM_PORTAL_CATALOG_CACHE_TTL` | `600` | Seconds `PortalCatalogResolver` trusts a fetched `config.json` before re-fetching |
 | `CWYM_PORTAL_CATALOG_ALLOWED_HOSTS` | *(empty)* | Comma-separated hostname allowlist for `config_json_url`/`services_json_url` (SSRF hardening), checked independently for each - empty means only the baseline scheme/private-IP checks apply |
 | `CWYM_PORTAL_CATALOG_MAX_RESPONSE_BYTES` | `5000000` | Max response size accepted when fetching either URL |
-| `CWYM_PORTAL_CATALOG_ALLOW_LOOPBACK` | `true` | Whether `localhost`/loopback is an acceptable host for either URL - defaults on since frontend and backend currently run on the same host; set to `false` once they're on separate hosts |
+| `CWYM_PORTAL_CATALOG_ALLOW_LOOPBACK` | `true` | Whether `localhost`/loopback is an acceptable host for either URL (URL mode only) - on for a local setup where portal and backend share a host; set to `false` on the shared server (see "Shared server" below) |
+| `CWYM_PORTAL_CONTEXT_MAX_LAYERS` | `2000` | Max entries accepted in `portal_context.layers` (inline mode) |
+| `CWYM_CORS_ALLOW_ORIGINS` | `*` | Comma-separated origins allowed to call the API - set to the portal origin(s) on a shared server |
 | `CWYM_FILTER_QUERYABLES_CACHE_TTL` | `3600` | Seconds `FilterAgent` trusts a fetched OGC API Features `/queryables` schema before re-fetching |
 | `CWYM_FILTER_RESULT_LIMIT` | `500` | Max features fetched per `FilterAgent` query |
 | `CWYM_FILTER_LLM_MAX_TOKENS` | `2048` | Token budget for `FilterAgent`'s condition-extraction LLM call |
@@ -195,6 +197,26 @@ liveness check). Notes:
   (`http://10.200.160.182:5555/v1` by default in the app) and keep that host
   in `NO_PROXY`; the internal host `10.200.160.182` is appended automatically.
 
+### Shared server
+
+When the backend runs on a server and developers run the Masterportal
+on their own machine, the server cannot reach the portal's
+`localhost` URLs. The frontend therefore sends the portal's layer list
+inline (`portal_context.layers`, the addon's default
+`portalContextMode: "inline"`), so no fetch is needed. Point the
+portal at the server in its `config.js`:
+
+```js
+chatWithYourMap: {backendBaseUrl: "http://<server>:8082"}
+```
+
+Recommended `.env` on the server:
+
+```bash
+CWYM_PORTAL_CATALOG_ALLOW_LOOPBACK=false            # loopback is the server itself there
+CWYM_CORS_ALLOW_ORIGINS=https://localhost:9001      # portal origin(s), comma-separated
+```
+
 ## Try it
 
 ```bash
@@ -210,7 +232,9 @@ curl -N -X POST http://localhost:8082/api/query \
 Request body is a standard AG-UI `RunAgentInput` (`threadId`/`runId`/
 `messages`/`state`/`tools`/`context`/`forwardedProps`) -
 `forwardedProps.portal_context` carries the requesting portal's
-`config_json_url`/`services_json_url` (Section 8 scoping); `state`
+layers, either inline as `layers` (preferred) or as
+`config_json_url`/`services_json_url` for the backend to fetch
+(Section 8 scoping, see `docs/frontend-api.md`); `state`
 carries the live map state for conversation-memory follow-ups (Section
 10) - see `cmym-agent-architecture.md` for the full shape.
 

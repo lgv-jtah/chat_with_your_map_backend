@@ -1039,7 +1039,18 @@ POST /api/query
 - no redirects;
 - a response size cap.
 
-Concurrent cold-start requests for the same portal share one build (single-flight, per-key lock). A rejected `portal_context` returns HTTP 400 before the SSE stream opens.
+Concurrent cold-start requests for the same portal share one build (single-flight, per-key lock). A *malformed* `portal_context` (e.g. only one URL) returns HTTP 400 before the SSE stream opens. A URL that fails the fetch policy, or a failed fetch, does **not**: as implemented, it is logged and the request runs unscoped (scoping is a correctness nicety, not worth failing every query for during a portal outage).
+
+**Inline mode (preferred, added for the shared-server setup).** The URL mode only works if the backend can reach the portal. With a backend on a shared server and portals running on developers' own `localhost`, it can't. So the frontend may instead send the layer list it already resolved itself (Masterportal's `allLayerConfigs`: services.json entries merged with config.json, ids as the map knows them):
+
+```jsonc
+"portal_context": {
+  "layers": [ { "id": "27764", "name": "StadtRAD-Stationen Hamburg", "typ": "WFS", "url": "https://…", "collection": null } ],
+  "languages": ["de", "en"]
+}
+```
+
+Exactly one mode per request (both, neither, or an empty `layers` list is a 400). The inline list is validated at the API boundary (required `id`, field length caps, at most `CWYM_PORTAL_CONTEXT_MAX_LAYERS` entries) and built into the same `LayerCatalog` without any fetch or cache. Trusting the client here is fine: the list only narrows the search, it grants nothing. See `docs/frontend-api.md` for the wire contract.
 
 ```python
 import asyncio, hashlib, json, httpx

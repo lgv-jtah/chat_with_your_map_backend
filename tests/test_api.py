@@ -13,6 +13,7 @@ conversation-memory work landed.
 
 import json
 
+import pytest
 from fastapi.testclient import TestClient
 
 from cwym_agent.api.main import app, get_pipeline, get_portal_catalog_resolver
@@ -261,6 +262,116 @@ def test_query_endpoint_forwards_portal_context_to_catalog_resolver():
     assert fake_portal_catalog_resolver.calls == [
         ("https://portal.example/config.json", "https://portal.example/services.json")
     ]
+
+
+def _recording_run_pipeline(monkeypatch) -> list[dict]:
+    """Wraps the endpoint's ``run_pipeline`` to record the scoping
+    kwargs it is called with, while still running the real (stub)
+    pipeline."""
+
+    from cwym_agent.api import main as api_main
+
+    calls: list[dict] = []
+    original = api_main.run_pipeline
+
+    def recorder(*args, **kwargs):
+        calls.append(kwargs)
+        return original(*args, **kwargs)
+
+    monkeypatch.setattr(api_main, "run_pipeline", recorder)
+    return calls
+
+
+def test_query_endpoint_inline_layers_scope_without_fetching(monkeypatch):
+    """Inline mode: the frontend sends its own layer list, so the
+    resolver (which would fetch URLs) must not be called at all, and the
+    pipeline is scoped to exactly those layers."""
+
+    fake_portal_catalog_resolver.calls.clear()
+    calls = _recording_run_pipeline(monkeypatch)
+
+    with client.stream(
+        "POST",
+        "/api/query",
+        json=_run_input(
+            "Zeige mir Fahrradstationen in Wandsbek",
+            portal_context={
+                "layers": [
+                    {"id": "27764", "name": "StadtRAD-Stationen Hamburg", "typ": "WFS", "url": "https://x/wfs"},
+                    {"id": 453, "name": "Basemap", "typ": "WMTS", "visibility": True},
+                ],
+                "languages": ["de"],
+            },
+        ),
+    ) as response:
+        assert response.status_code == 200
+        body = "".join(response.iter_text())
+
+    assert "RUN_ERROR" not in [event["type"] for event in _parse_sse_events(body)]
+    assert fake_portal_catalog_resolver.calls == []
+    assert sorted(calls[0]["allowed_layer_ids"]) == ["27764", "453"]
+    catalog = calls[0]["layer_catalog"]
+    assert catalog.get("27764").typ == "WFS"
+    assert catalog.get("27764").url == "https://x/wfs"
+    assert catalog.name("453") == "Basemap"
+
+
+def test_query_endpoint_inline_layer_without_name_falls_back_to_id(monkeypatch):
+    calls = _recording_run_pipeline(monkeypatch)
+
+    with client.stream(
+        "POST",
+        "/api/query",
+        json=_run_input("Zeige mir Fahrradstationen", portal_context={"layers": [{"id": "27764"}]}),
+    ) as response:
+        assert response.status_code == 200
+        "".join(response.iter_text())
+
+    assert calls[0]["layer_catalog"].name("27764") == "27764"
+
+
+@pytest.mark.parametrize(
+    "portal_context",
+    [
+        # both modes at once
+        {
+            "layers": [{"id": "1"}],
+            "config_json_url": "https://portal.example/config.json",
+            "services_json_url": "https://portal.example/services.json",
+        },
+        # only one URL, no layers
+        {"config_json_url": "https://portal.example/config.json"},
+        # neither mode (only languages)
+        {"languages": ["de"]},
+        # empty layer list
+        {"layers": []},
+        # layer without id
+        {"layers": [{"name": "no id"}]},
+        # overlong field
+        {"layers": [{"id": "1", "url": "https://x/" + "a" * 3000}]},
+    ],
+)
+def test_query_endpoint_invalid_portal_context_returns_400(portal_context):
+    response = client.post(
+        "/api/query", json=_run_input("Zeige mir Fahrradstationen", portal_context=portal_context)
+    )
+
+    assert response.status_code == 400
+
+
+def test_query_endpoint_too_many_inline_layers_returns_400(monkeypatch):
+    monkeypatch.setenv("CWYM_PORTAL_CONTEXT_MAX_LAYERS", "2")
+
+    response = client.post(
+        "/api/query",
+        json=_run_input(
+            "Zeige mir Fahrradstationen",
+            portal_context={"layers": [{"id": "1"}, {"id": "2"}, {"id": "3"}]},
+        ),
+    )
+
+    assert response.status_code == 400
+    assert "max is 2" in response.json()["detail"]
 
 
 def test_query_endpoint_without_portal_context_stays_unscoped():
