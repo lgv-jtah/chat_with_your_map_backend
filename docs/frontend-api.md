@@ -144,7 +144,7 @@ logged on the backend and the request runs unscoped.
 
 | Field | Type | Meaning |
 |---|---|---|
-| `activeLayerIds` | `string[]` (max 50) | Thematic layer ids currently visible on the map. Read them **live from the map** on every request, because the user can toggle layers by hand. |
+| `activeLayerIds` | `string[]` (max 50) | Thematic layer ids currently visible on the map. Read them **live from the map** on every request, because the user can toggle layers by hand. Leave out layers the frontend created itself (the filter/analysis result layers, draw or import layers) - the backend doesn't know them. |
 | `filters` | `{layerId, filterSpec}[]` (max 10) | One entry per active `APPLY_FILTER` overlay: the `filterSpec` exactly as it arrived in that command. Echo it back unchanged; never construct it yourself. |
 | `lastLocation` | `{name, kind}` or `null` | The last place shown, taken from `DRAW_BOUNDARY` or a single-location `NAVIGATE_TO_LOCATION` (only when it has a `kind`). `kind` ∈ `bezirk`, `stadtteil`, `address`. Lets "was gibt es dort?" work. |
 
@@ -379,6 +379,16 @@ previous one. State: if `kind` is set, set `lastLocation = {name: label, kind}`.
 There is one overlay per `layerId`: a new `APPLY_FILTER` for the same
 layer replaces the old overlay and its `filterSpec`.
 
+**How the Masterportal addon shows it** (recommended for other
+frontends too): the result is a real, removable layer in the layer
+tree, named after the original layer ("StadtRAD-Stationen Hamburg –
+Filter: Wandsbek"). The original layer itself is not switched on - that
+is why a filter turn never ticks it. A chat info line says so, with a
+button to switch on the full layer. When the user switches on the
+original layer, the result layer is unticked (it stays in the tree), so
+features don't show twice. When the user deletes the result layer in
+the tree, its `filterSpec` is dropped as well.
+
 ### `CLEAR_FILTER`
 
 ```json
@@ -424,6 +434,11 @@ This doesn't restore the full layer; the backend always sends an
 ```
 
 Remove all `ADD_RESULT_LAYER` overlays. Every new analysis starts with this command.
+
+The Masterportal addon shows each analysis layer as a removable layer in
+the layer tree. Since `context` layers arrive before `result` layers and
+each new tree layer goes on top, results lie above their context, and a
+click opens the result feature first.
 
 ### `OPEN_TOOL`
 
