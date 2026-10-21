@@ -85,8 +85,10 @@ Things to know:
   "context": [],
   "forwardedProps": {
     "portal_context": {
-      "config_json_url": "https://localhost:9001/portal/chat_with_your_map_portal/config.json",
-      "services_json_url": "https://localhost:9001/portal/chat_with_your_map_portal/resources/services-internet.json",
+      "layers": [
+        {"id": "453", "name": "Geobasiskarten (farbig)", "typ": "WMS", "url": "https://geodienste.hamburg.de/HH_WMS_Geobasiskarten", "collection": null},
+        {"id": "27764", "name": "StadtRAD-Stationen Hamburg", "typ": "WFS", "url": "https://geodienste.hamburg.de/HH_WFS_Stadtrad", "collection": null}
+      ],
       "languages": ["de", "en"]
     }
   }
@@ -101,7 +103,42 @@ Things to know:
 | `state` | no | Current map state, see table below. Omit or send `{}` on the first turn. |
 | `tools`, `context` | yes (AG-UI) | Send `[]`. Not used. |
 | `forwardedProps` | yes (AG-UI) | Send at least `{}`. |
-| `forwardedProps.portal_context` | no, but strongly recommended | The portal's own `config.json` and `services.json` URLs, which the backend fetches. Layer search is then limited to layers this portal actually offers, and `state` layer ids are checked against them. **Without it, layer search runs against all ~6,500 Hamburg layers, and all `state` layer ids/filters are dropped.** Send both URLs or neither; one alone fails with 400. |
+| `forwardedProps.portal_context` | no, but strongly recommended | Which layers this portal offers. Layer search is then limited to them, and `state` layer ids are checked against them. **Without it, layer search runs against all ~6,500 Hamburg layers, and all `state` layer ids/filters are dropped.** Use exactly one of two modes, see below; mixing them, an empty `layers` list, or only one URL fails with 400. |
+
+### `portal_context` modes
+
+**Inline (preferred): `layers`.** The frontend sends the portal's own
+layer list - in the Masterportal the root store getter `allLayerConfigs`
+(services.json entries with the config.json overrides already applied),
+folders skipped. The backend fetches nothing, so this works no matter
+where the portal runs - including a portal on a developer's `localhost`
+talking to the shared backend server.
+
+| Field | Required | Meaning |
+|---|---|---|
+| `id` | yes | Layer id as the map knows it (string; numbers are accepted and stringified), max 200 chars. This is the id `ACTIVATE_LAYER` etc. will use. |
+| `name` | no | Display name, used in replies. Falls back to the id. Max 500 chars. |
+| `typ` | no | Service type (`WMS`, `WFS`, `OAF`, …). Max 50 chars. |
+| `url` | no | Service URL. FilterAgent needs it (with `typ: "OAF"` and `collection`) to filter a layer. Max 2000 chars. |
+| `collection` | no | OGC API Features collection. Max 500 chars. |
+
+Other fields are ignored. At most 2000 entries
+(`CWYM_PORTAL_CONTEXT_MAX_LAYERS`); duplicate ids: the last one wins.
+
+**URL (fallback): `config_json_url` + `services_json_url`.** The backend
+fetches both itself and takes the layer ids from config.json's
+`layerConfig.baselayer`/`subjectlayer`. Only works if the backend can
+reach those URLs (not the case for a portal on someone's `localhost`
+and a backend on a server). A fetch failure is **not** an error: it is
+logged on the backend and the request runs unscoped.
+
+```json
+"portal_context": {
+  "config_json_url": "https://portal.example/config.json",
+  "services_json_url": "https://portal.example/resources/services-internet.json",
+  "languages": ["de"]
+}
+```
 
 ### `state`
 
@@ -564,8 +601,10 @@ frontend sent it back.
   "context": [],
   "forwardedProps": {
     "portal_context": {
-      "config_json_url": "https://localhost:9001/portal/chat_with_your_map_portal/config.json",
-      "services_json_url": "https://localhost:9001/portal/chat_with_your_map_portal/resources/services-internet.json",
+      "layers": [
+        {"id": "453", "name": "Geobasiskarten (farbig)", "typ": "WMS", "url": "https://geodienste.hamburg.de/HH_WMS_Geobasiskarten", "collection": null},
+        {"id": "27764", "name": "StadtRAD-Stationen Hamburg", "typ": "WFS", "url": "https://geodienste.hamburg.de/HH_WFS_Stadtrad", "collection": null}
+      ],
       "languages": ["de", "en"]
     }
   }
@@ -612,7 +651,7 @@ data: {"type":"RUN_FINISHED", …}
 | Situation | What you get |
 |---|---|
 | Body isn't a valid `RunAgentInput` (missing `threadId`, wrong types, …) | HTTP **422**, FastAPI validation error JSON `{"detail": [ … ]}` |
-| Last message isn't a non-empty user message; `portal_context` incomplete; `state` exceeds size limits | HTTP **400**, `{"detail": "the last message must be a non-empty user query"}` (or similar) |
+| Last message isn't a non-empty user message; `portal_context` invalid (both or neither mode, one URL only, empty/oversized `layers`, a layer without `id`); `state` exceeds size limits | HTTP **400**, `{"detail": "the last message must be a non-empty user query"}` (or similar) |
 | Something fails while the run is in progress (LLM down, geodata service error, …) | HTTP **200** stream with `RUN_ERROR` `{"message": "…"}`, then the stream ends. MapCommands executed before the error stay applied. |
 | Backend not running / CORS / network | `fetch` rejects (`TypeError`) |
 | The request can't be done (e.g. no matching layer) | Not an error: a normal run with no MapCommands and a text answer asking the user to clarify. |

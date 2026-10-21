@@ -107,6 +107,12 @@ class GeodataSettings:
     portal_catalog_allow_loopback: bool = field(
         default_factory=lambda: _env_bool("CWYM_PORTAL_CATALOG_ALLOW_LOOPBACK", True)
     )
+    # Upper bound on portal_context.layers (inline mode) - a real portal
+    # exposes tens to a few hundred layers; this only guards against an
+    # abusive/buggy client sending an unbounded list.
+    portal_context_max_layers: int = field(
+        default_factory=lambda: _env_int("CWYM_PORTAL_CONTEXT_MAX_LAYERS", 2000)
+    )
 
     # FilterAgent (cwym-agent-architecture.md Section 9): CQL2 filtering
     # against a layer's own OGC API Features endpoint.

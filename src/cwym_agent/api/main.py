@@ -3,8 +3,8 @@
 The endpoint accepts a standard AG-UI ``RunAgentInput`` body
 (cmym-agent-architecture.md Section 10): a per-chat-session
 ``threadId``, the last few chat turns, the live map state, and the
-resolved portal config/services URLs in
-``forwardedProps.portal_context``. Replaces an earlier custom
+portal's layers in ``forwardedProps.portal_context`` (either inline as
+``layers`` or as config/services URLs - see ``PortalContext``). Replaces an earlier custom
 ``QueryRequest`` body that carried only the current message text and a
 fresh ``threadId`` per request - with no conversation memory at all, a
 follow-up like "zeig mir nur die Gymnasien" after "wo finde ich alle
@@ -13,6 +13,7 @@ Schulen" was planned in total isolation (see ImplementationLog.md).
 
 import asyncio
 import logging
+import os
 import time
 from contextlib import asynccontextmanager
 from functools import lru_cache
@@ -23,11 +24,12 @@ from fastapi import Depends, FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
 from haystack import Pipeline
-from pydantic import BaseModel, ValidationError
+from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator, model_validator
 
 from cwym_agent.bridge import AGUIEventBridge
 from cwym_agent.geodata.conversation_context import build_context, current_query
-from cwym_agent.geodata.portal_catalog_resolver import PortalCatalogResolver
+from cwym_agent.geodata.portal_catalog_resolver import PortalCatalogResolver, build_inline_catalog
+from cwym_agent.geodata.settings import GeodataSettings
 from cwym_agent.pipeline import build_pipeline, run_pipeline
 
 # Configure a basic root handler so `cwym_agent.*` module loggers (used
@@ -88,27 +90,79 @@ async def lifespan(app: FastAPI):
 app = FastAPI(title="CWYM-Agent", lifespan=lifespan)
 
 # The Masterportal dev server and deployed portal run on a different
-# origin than this backend; allow all origins for now since this is a
-# local/dev integration - tighten before any real deployment.
+# origin than this backend. Defaults to all origins (local/dev
+# integration); on a shared server set CWYM_CORS_ALLOW_ORIGINS to a
+# comma-separated list of the portal origins that may call it.
+def _cors_allow_origins() -> list[str]:
+    raw = os.environ.get("CWYM_CORS_ALLOW_ORIGINS", "*")
+    return [origin.strip() for origin in raw.split(",") if origin.strip()] or ["*"]
+
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=_cors_allow_origins(),
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
 
-class PortalContext(BaseModel):
-    """Matches what the frontend already resolved to boot itself
-    (cmym-agent-architecture.md Section 8) - the backend never
-    re-derives portal URLs on its own. Both URLs are required now
-    (unlike the earlier config.json-only design): PortalCatalogResolver
-    cross-references services.json for per-layer metadata FilterAgent
-    needs to target an already-active layer (Section 10)."""
+class PortalLayer(BaseModel):
+    """One entry of ``portal_context.layers`` - a layer the frontend's
+    portal exposes, taken from Masterportal's merged ``allLayerConfigs``
+    (services.json entry + config.json overrides). Only the fields the
+    backend uses are kept; any others are ignored."""
 
-    config_json_url: str
-    services_json_url: str
+    model_config = ConfigDict(extra="ignore")
+
+    id: str = Field(min_length=1, max_length=200)
+    name: str | None = Field(default=None, max_length=500)
+    typ: str | None = Field(default=None, max_length=50)
+    url: str | None = Field(default=None, max_length=2000)
+    collection: str | None = Field(default=None, max_length=500)
+
+    @field_validator("id", mode="before")
+    @classmethod
+    def _coerce_numeric_id(cls, value):
+        # Masterportal layer ids are strings, but a hand-written
+        # config may carry plain numbers - accept those too.
+        if isinstance(value, int) and not isinstance(value, bool):
+            return str(value)
+        return value
+
+
+class PortalContext(BaseModel):
+    """Which layers the requesting portal exposes, in one of two modes
+    (exactly one must be used):
+
+    - **inline** (preferred): ``layers`` - the list the frontend already
+      resolved itself. Needs no network access from the backend to the
+      portal, so it also works for a portal running on a developer's
+      ``localhost`` against a shared backend.
+    - **URL** (fallback): ``config_json_url`` + ``services_json_url`` -
+      fetched server-side by ``PortalCatalogResolver``
+      (cmym-agent-architecture.md Section 8). Only works if the backend
+      can reach the portal.
+    """
+
+    layers: list[PortalLayer] | None = Field(default=None, min_length=1)
+    config_json_url: str | None = None
+    services_json_url: str | None = None
     languages: list[str] = ["de"]
+
+    @model_validator(mode="after")
+    def _exactly_one_mode(self):
+        has_urls = bool(self.config_json_url or self.services_json_url)
+        if self.layers is not None:
+            if has_urls:
+                raise ValueError(
+                    "portal_context: send either 'layers' or the config/services URLs, not both"
+                )
+            return self
+        if not (self.config_json_url and self.services_json_url):
+            raise ValueError(
+                "portal_context: needs either 'layers' or both 'config_json_url' and 'services_json_url'"
+            )
+        return self
 
 
 @app.post("/api/query")
@@ -125,7 +179,15 @@ async def query_endpoint(
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
     catalog = None
-    if portal_context is not None:
+    if portal_context is not None and portal_context.layers is not None:
+        max_layers = GeodataSettings().portal_context_max_layers
+        if len(portal_context.layers) > max_layers:
+            raise HTTPException(
+                status_code=400,
+                detail=f"portal_context.layers has {len(portal_context.layers)} entries, max is {max_layers}",
+            )
+        catalog = build_inline_catalog(layer.model_dump() for layer in portal_context.layers)
+    elif portal_context is not None:
         catalog = await portal_catalog_resolver.get_or_build(
             portal_context.config_json_url, portal_context.services_json_url
         )

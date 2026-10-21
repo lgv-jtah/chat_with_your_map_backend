@@ -11,7 +11,11 @@ import asyncio
 
 import httpx
 
-from cwym_agent.geodata.portal_catalog_resolver import PortalCatalogResolver, _extract_layer_ids
+from cwym_agent.geodata.portal_catalog_resolver import (
+    PortalCatalogResolver,
+    _extract_layer_ids,
+    build_inline_catalog,
+)
 from cwym_agent.geodata.settings import GeodataSettings
 
 # Mirrors the real shape of chat_with_your_map_portal/config.json's
@@ -445,3 +449,24 @@ class TestLoopbackUsesNonVerifyingClient:
         assert result is None
         assert strict.calls == []
         assert loopback.calls == []
+
+
+class TestBuildInlineCatalog:
+    def test_builds_layer_matches_from_inline_entries(self):
+        catalog = build_inline_catalog(
+            [
+                {"id": "27764", "name": "StadtRAD-Stationen Hamburg", "typ": "OAF", "url": "https://x", "collection": "c"},
+                {"id": "453", "name": None, "typ": None, "url": None, "collection": None},
+            ]
+        )
+
+        match = catalog.get("27764")
+        assert match.name == "StadtRAD-Stationen Hamburg"
+        assert (match.typ, match.url, match.collection, match.confidence) == ("OAF", "https://x", "c", 1.0)
+        assert catalog.name("453") == "453"
+        assert set(catalog.names()) == {"27764", "453"}
+
+    def test_duplicate_ids_keep_the_last_entry(self):
+        catalog = build_inline_catalog([{"id": "1", "name": "a"}, {"id": "1", "name": "b"}])
+
+        assert catalog.names() == {"1": "b"}
