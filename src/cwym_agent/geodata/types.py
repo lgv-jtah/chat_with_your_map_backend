@@ -53,6 +53,11 @@ class LocationMatch:
     is address. `"state"`/`"city"` (also in `_BROAD_TYPES`) have no
     observed hits in Hamburg's index and no clean equivalent here, so
     they map to None rather than a guessed value."""
+    alternatives: list[str] = field(default_factory=list)
+    """Other areas the query could equally mean, e.g. "Hoheluft" ->
+    this match is "Hoheluft-Ost", alternatives ["Hoheluft-West"]. Non-empty
+    means the place is ambiguous: no map commands are built and the answer
+    asks the user which one they mean."""
 
 
 @dataclass
@@ -73,6 +78,13 @@ class LayerMatch:
     """The OGC API Features collection id (only set for typ == "OAF"),
     e.g. "stadtrad_stationen" - distinct from layer_id, which is
     Hamburg's own catalog id."""
+    feature_type: str | None = None
+    """The WFS feature type name without prefix (only for typ == "WFS"),
+    e.g. "staatliche_schulen" - services.json's ``featureType``.
+    FilterAgent needs it (plus ``feature_ns``) to query a WFS layer."""
+    feature_ns: str | None = None
+    """The WFS feature type's namespace URI, e.g.
+    "http://www.deegree.org/de.hh.up" - services.json's ``featureNS``."""
 
 
 @dataclass

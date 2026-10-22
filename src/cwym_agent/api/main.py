@@ -27,6 +27,7 @@ from haystack import Pipeline
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator, model_validator
 
 from cwym_agent.bridge import AGUIEventBridge
+from cwym_agent.geodata import clarification
 from cwym_agent.geodata.conversation_context import build_context, current_query
 from cwym_agent.geodata.portal_catalog_resolver import PortalCatalogResolver, build_inline_catalog
 from cwym_agent.geodata.settings import GeodataSettings
@@ -119,6 +120,8 @@ class PortalLayer(BaseModel):
     typ: str | None = Field(default=None, max_length=50)
     url: str | None = Field(default=None, max_length=2000)
     collection: str | None = Field(default=None, max_length=500)
+    featureType: str | None = Field(default=None, max_length=200)
+    featureNS: str | None = Field(default=None, max_length=500)
 
     @field_validator("id", mode="before")
     @classmethod
@@ -197,6 +200,13 @@ async def query_endpoint(
         context = build_context(inp, catalog)
     except ValidationError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    # "Hoheluft-West" as the answer to "meinst du Hoheluft-Ost oder
+    # Hoheluft-West?" becomes the complete original question again.
+    resolved_query = clarification.resolve_reply(query, context.history)
+    if resolved_query != query:
+        logger.info("Clarification reply %r resolved to %r", query, resolved_query)
+        query = resolved_query
 
     bridge = AGUIEventBridge(thread_id=inp.thread_id, run_id=inp.run_id)
     encoder = EventEncoder()

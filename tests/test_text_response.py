@@ -160,3 +160,40 @@ class TestAnalysisReply:
 
         assert "keine Antwort" in text
         assert "nicht verändert" in text
+
+
+class TestAmbiguousLocationReply:
+    def test_asks_back_with_the_found_areas(self):
+        hoheluft = LocationMatch("Hoheluft-Ost", 53.58, 9.97, 0.6, alternatives=["Hoheluft-West"])
+
+        result = component.run(aggregated=_aggregated(ambiguous_location=hoheluft, locations=[hoheluft]), query="q")
+
+        assert result["response_text"] == (
+            "Den Ort gibt es mehrfach – meinst du Hoheluft-Ost oder Hoheluft-West? "
+            "Die Karte habe ich noch nicht verändert."
+        )
+
+    def test_three_areas(self):
+        location = LocationMatch("A-Nord", 1, 1, 1, alternatives=["A-Süd", "A-West"])
+
+        assert component._ambiguous_location_reply(location) == (
+            "Den Ort gibt es mehrfach – meinst du A-Nord, A-Süd oder A-West? Die Karte habe ich noch nicht verändert."
+        )
+
+
+class TestFilterFailedIsAdmitted:
+    def test_prompt_says_the_filter_was_not_applied(self):
+        aggregated = _aggregated(
+            query="Grundschulen in Hoheluft-West", layer=_LAYER, locations=[_LOCATION], action=_ACTION, filter_failed=True
+        )
+
+        prompt = component._build_response_prompt(aggregated, "q", [{"type": "ACTIVATE_LAYER"}])
+
+        assert "konnte NICHT angewendet" in prompt
+        assert "auf Wandsbek" in prompt
+        assert "„StadtRAD-Stationen Hamburg“" in prompt
+
+    def test_normal_prompt_without_failure(self):
+        aggregated = _aggregated(layer=_LAYER, locations=[_LOCATION], action=_ACTION)
+
+        assert "NICHT angewendet" not in component._build_response_prompt(aggregated, "q", [{"type": "ACTIVATE_LAYER"}])

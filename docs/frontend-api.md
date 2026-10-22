@@ -119,8 +119,10 @@ talking to the shared backend server.
 | `id` | yes | Layer id as the map knows it (string; numbers are accepted and stringified), max 200 chars. This is the id `ACTIVATE_LAYER` etc. will use. |
 | `name` | no | Display name, used in replies. Falls back to the id. Max 500 chars. |
 | `typ` | no | Service type (`WMS`, `WFS`, `OAF`, …). Max 50 chars. |
-| `url` | no | Service URL. FilterAgent needs it (with `typ: "OAF"` and `collection`) to filter a layer. Max 2000 chars. |
+| `url` | no | Service URL. FilterAgent needs it to filter a layer (OAF: with `collection`; WFS: with `featureType`). Max 2000 chars. |
 | `collection` | no | OGC API Features collection. Max 500 chars. |
+| `featureType` | no | WFS feature type name without prefix (services.json `featureType`, e.g. `staatliche_schulen`). Needed to filter a WFS layer. Max 200 chars. |
+| `featureNS` | no | WFS feature type namespace (services.json `featureNS`). Informational - the backend uses the namespace the WFS itself declares. Max 500 chars. |
 
 Other fields are ignored. At most 2000 entries
 (`CWYM_PORTAL_CONTEXT_MAX_LAYERS`); duplicate ids: the last one wins.
@@ -254,6 +256,7 @@ them, but no current backend code path sends them.
 | UDP analysis | `CLEAR_RESULT_LAYERS`, `ADD_RESULT_LAYER` × n (`context` layers first, then `result`), `ZOOM_TO_EXTENT` |
 | Open a tool ("öffne die Legende", "Zeig mir die Legende", "Drucke die Karte") | `OPEN_TOOL` |
 | Small talk / unclear request | no commands, only the text answer |
+| Ambiguous place ("Grundschulen in Hoheluft": Hoheluft-Ost and -West) | no commands; the answer asks "Den Ort gibt es mehrfach – meinst du Hoheluft-Ost oder Hoheluft-West? …". The user's reply ("Hoheluft-West", "West") is turned back into the full original question by the backend - just send it as the next user message. |
 
 ### Shared types
 
@@ -372,7 +375,7 @@ previous one. State: if `kind` is set, set `lastLocation = {name: label, kind}`.
 | `layerId` | `string` | The portal layer that was filtered. Use it as the overlay's key. |
 | `features` | GeoJSON FeatureCollection | **The actual matching features**, already queried by the backend. Draw them as an ad-hoc overlay; don't re-filter the portal layer yourself. Features have only the properties the backend selected (usually `name`). |
 | `label` | `string?` | Short description for UI/legend. |
-| `totalMatched` | `int?` | Number of matches reported by the server (may be missing). |
+| `totalMatched` | `int?` | Number of matches in the area. Missing when unknown (the result was cut at the backend's limit). |
 | `truncated` | `boolean` | `true` if `totalMatched` > number of features sent (the backend limits how many it fetches). Worth telling the user. |
 | `filterSpec` | `{conditions, area?}` or `null` | **Opaque to the frontend.** Store it under `layerId` and send it back in `state.filters` (see [section 5](#5-conversation-state-round-trip)). `null` means: delete any stored filter for this layer. `conditions[]` = `{field, operator, value}`, with `operator` ∈ `eq ne lt lte gt gte contains`. |
 

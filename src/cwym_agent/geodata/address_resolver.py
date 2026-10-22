@@ -20,6 +20,7 @@ import logging
 
 import httpx
 
+from cwym_agent.geodata.area_boundaries import AreaBoundaries
 from cwym_agent.geodata.settings import GeodataSettings
 from cwym_agent.geodata.types import LocationMatch
 
@@ -61,9 +62,15 @@ _KIND_BY_TYPE = {
 class AddressResolver:
     """Resolves Hamburg location strings to coordinates."""
 
-    def __init__(self, settings: GeodataSettings | None = None, http_client: httpx.Client | None = None):
+    def __init__(
+        self,
+        settings: GeodataSettings | None = None,
+        http_client: httpx.Client | None = None,
+        area_boundaries: AreaBoundaries | None = None,
+    ):
         self.settings = settings or GeodataSettings()
         self._client = http_client or httpx.Client(timeout=self.settings.timeout)
+        self.area_boundaries = area_boundaries or AreaBoundaries(self.settings, self._client)
 
     def resolve(self, query: str) -> LocationMatch | None:
         """Resolve ``query`` to the best-matching location, if any."""
@@ -97,7 +104,37 @@ class AddressResolver:
             return None
 
         best_hit = self._select_best_hit(hits, query)
-        return self._to_location_match(best_hit, fallback_name=query)
+        match = self._to_location_match(best_hit, fallback_name=query)
+        if match is not None and match.kind in ("bezirk", "stadtteil"):
+            # The address search's area "boundary" is only a rectangle.
+            outline = self.area_boundaries.outline(match.name, match.kind)
+            if outline is not None:
+                match.boundary = outline
+                match.extent = self._bbox_of(outline)
+        if match is not None:
+            match.alternatives = [name for name in self._ambiguous_names(hits, query) if name != match.name]
+        return match
+
+    @staticmethod
+    def _ambiguous_names(hits: list[dict], query: str) -> list[str]:
+        """Area names the query could equally mean: no area is named
+        exactly like the query, but several start with it - "Hoheluft" ->
+        Hoheluft-Ost, Hoheluft-West; "Barmbek" -> Barmbek-Nord, Barmbek-Süd.
+        Verified live: "Altona", "Eimsbüttel", "Harburg", "Hamm" all have an
+        exact area hit and are not ambiguous. Empty if not ambiguous."""
+
+        normalized_query = query.strip().lower()
+        names = []
+        for hit in hits:
+            properties = (hit.get("_source") or {}).get("properties") or {}
+            if (properties.get("type") or "").lower() not in _BROAD_TYPES:
+                continue
+            name = (properties.get("searchfield") or "").strip()
+            if name.lower() == normalized_query:
+                return []
+            if name.lower().startswith((f"{normalized_query}-", f"{normalized_query} ")) and name not in names:
+                names.append(name)
+        return names if len(names) >= 2 else []
 
     @staticmethod
     def _select_best_hit(hits: list[dict], query: str) -> dict:

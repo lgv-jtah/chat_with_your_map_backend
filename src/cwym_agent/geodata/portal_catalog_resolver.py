@@ -105,6 +105,7 @@ import hashlib
 import ipaddress
 import json
 import logging
+import re
 import time
 from asyncio import Lock
 from collections.abc import Iterable, Mapping
@@ -187,23 +188,52 @@ def _extract_layer_ids(config_json: dict) -> set[str]:
     return ids
 
 
+def _config_elements_by_id(config_json: dict) -> dict[str, dict]:
+    """config.json layer entries with a single id, keyed by that id - their
+    own settings (e.g. a portal-specific ``name``) override services.json,
+    the same way Masterportal merges them (``{...rawLayer, ...layerConf}``)."""
+
+    found: dict[str, dict] = {}
+
+    def walk(elements: list) -> None:
+        for element in elements:
+            if not isinstance(element, dict):
+                continue
+            walk(element.get("elements") or [])
+            raw_id = element.get("id")
+            if raw_id is not None and not isinstance(raw_id, list):
+                found[str(raw_id)] = element
+
+    layer_config = config_json.get("layerConfig") or {}
+    for section in ("baselayer", "subjectlayer"):
+        walk((layer_config.get(section) or {}).get("elements") or [])
+    return found
+
+
 def _build_layer_catalog(config_json: dict, services_json) -> "LayerCatalog":
     """Cross-references config.json's exposed ids against services.json's
     per-layer metadata - an id declared in config.json but missing from
     services.json (unexpected, but not impossible for a hand-edited
-    portal) is silently dropped rather than half-populated."""
+    portal) is silently dropped rather than half-populated.
+
+    A portal-specific variant of a service, like ``8712.1`` ("Grundschulen":
+    the schools WFS ``8712`` with a client-side filter), is looked up by its
+    part before the dot - Masterportal's own ``splitId`` - with the
+    config.json entry's settings (its name) on top."""
 
     exposed_ids = _extract_layer_ids(config_json)
     if not isinstance(services_json, list):
         raise _URLRejected("services.json is not a list")
 
     by_id = {str(entry["id"]): entry for entry in services_json if isinstance(entry, dict) and "id" in entry}
+    config_entries = _config_elements_by_id(config_json)
 
     layers: dict[str, LayerMatch] = {}
     for layer_id in exposed_ids:
-        entry = by_id.get(layer_id)
-        if entry is None:
+        service = by_id.get(layer_id) or by_id.get(layer_id.split(".")[0])
+        if service is None:
             continue
+        entry = {**service, **config_entries.get(layer_id, {})}
         layers[layer_id] = LayerMatch(
             name=entry.get("name") or layer_id,
             layer_id=layer_id,
@@ -211,8 +241,21 @@ def _build_layer_catalog(config_json: dict, services_json) -> "LayerCatalog":
             typ=entry.get("typ"),
             url=entry.get("url"),
             collection=entry.get("collection"),
+            feature_type=entry.get("featureType"),
+            feature_ns=entry.get("featureNS"),
         )
     return LayerCatalog(layers)
+
+
+_UMLAUTS = str.maketrans({"ä": "ae", "ö": "oe", "ü": "ue", "ß": "ss"})
+
+
+def name_key(name: str) -> str:
+    """A name normalized for comparing (case, umlauts, punctuation, a
+    plural/singular ending) - "Grundschulen" == "grundschule"."""
+
+    words = re.sub(r"[^a-z0-9 ]+", " ", (name or "").lower().translate(_UMLAUTS)).split()
+    return " ".join(re.sub(r"(en|n|e|s)$", "", word) if len(word) > 4 else word for word in words)
 
 
 _RUNTIME_LAYER_ID_PREFIX = "cwym_"
@@ -258,6 +301,8 @@ def build_inline_catalog(layers: Iterable[Mapping[str, object]]) -> "LayerCatalo
             typ=entry.get("typ"),
             url=entry.get("url"),
             collection=entry.get("collection"),
+            feature_type=entry.get("featureType"),
+            feature_ns=entry.get("featureNS"),
         )
     return LayerCatalog(result)
 
@@ -283,6 +328,20 @@ class LayerCatalog:
 
     def names(self) -> dict[str, str]:
         return {layer_id: match.name for layer_id, match in self._layers.items()}
+
+    def match_name(self, query: str) -> LayerMatch | None:
+        """The portal layer whose own name is the query (ignoring case,
+        umlaut spelling, punctuation and a plural/singular "-n"/"-en"/"-e"/
+        "-s" ending), e.g. "Grundschulen" -> the portal's "Grundschulen"
+        layer. Used before the central layer search, which can't find a
+        portal-only variant like ``8712.1`` at all. None if no or more than
+        one layer matches."""
+
+        wanted = name_key(query)
+        if not wanted:
+            return None
+        found = [match for match in self._layers.values() if name_key(match.name) == wanted]
+        return found[0] if len(found) == 1 else None
 
 
 @dataclass

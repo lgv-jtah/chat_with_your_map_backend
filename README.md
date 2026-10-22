@@ -106,7 +106,7 @@ Qwen3Settings` and `cwym_agent.geodata.settings.GeodataSettings`):
 | `CWYM_QWEN3_MODEL` | `Qwen/Qwen3.8-27B` | Model name to request |
 | `CWYM_QWEN3_API_KEY` | `EMPTY` | API key (the server tested against requires no real auth) |
 | `CWYM_QWEN3_TIMEOUT` | `60` | Request timeout (seconds) |
-| `CWYM_QWEN3_MAX_TOKENS_PLAN` | `4096` | Max tokens for the planning call (covers the reasoning trace + tool calls) - the conversation-context block + planning rules give Qwen3 more to reason through than a bare query, and reasoning length is highly variable run to run, so this needs generous headroom |
+| `CWYM_QWEN3_MAX_TOKENS_PLAN` | `6144` | Max tokens for the planning call (covers the reasoning trace + tool calls) - the conversation-context block + planning rules give Qwen3 more to reason through than a bare query, and reasoning length is highly variable run to run, so this needs generous headroom |
 | `CWYM_QWEN3_MAX_TOKENS_GENERATE` | `2048` | Max tokens for the final reply generation call - the conversation-context block gives Qwen3 more to reason through before answering than a bare query, so this needs generous headroom, same rationale as `CWYM_QWEN3_MAX_TOKENS_PLAN` |
 | `CWYM_LAYER_SEARCH_URL` | `https://geodienste.hamburg.de/layers/_search` | Hamburg's public layer catalog Elasticsearch endpoint |
 | `CWYM_LAYER_EMBED_MODEL` | `sentence-transformers/all-MiniLM-L6-v2` | Embedding model for layer search |
@@ -118,6 +118,7 @@ Qwen3Settings` and `cwym_agent.geodata.settings.GeodataSettings`):
 | `CWYM_LAYER_FETCH_RETRY_BACKOFF` | `2` | Seconds to wait between layer catalog fetch retries |
 | `CWYM_LAYER_LLM_MAX_TOKENS` | `2048` | Token budget for the layer expansion/disambiguation LLM calls |
 | `CWYM_ADDRESS_SEARCH_URL` | `https://api.hamburg.de/addr_search` | Hamburg's public address/district search endpoint |
+| `CWYM_AREA_BOUNDARIES_URL` | `https://api.hamburg.de/datasets/v1/verwaltungsgrenzen` | Official borough/district outlines (OAF) used instead of the address search's bounding rectangles for spatial filters and drawn boundaries |
 | `CWYM_ADDRESS_RESULT_SIZE` | `20` | Candidates fetched per address query (needs enough headroom to find district/county-level hits alongside street matches) |
 | `CWYM_GEODATA_TIMEOUT` | `15` | Request timeout (seconds) for both geodata endpoints |
 | `CWYM_PORTAL_CATALOG_CACHE_TTL` | `600` | Seconds `PortalCatalogResolver` trusts a fetched `config.json` before re-fetching |
@@ -128,7 +129,7 @@ Qwen3Settings` and `cwym_agent.geodata.settings.GeodataSettings`):
 | `CWYM_CORS_ALLOW_ORIGINS` | `*` | Comma-separated origins allowed to call the API - set to the portal origin(s) on a shared server |
 | `CWYM_FILTER_QUERYABLES_CACHE_TTL` | `3600` | Seconds `FilterAgent` trusts a fetched OGC API Features `/queryables` schema before re-fetching |
 | `CWYM_FILTER_RESULT_LIMIT` | `500` | Max features fetched per `FilterAgent` query |
-| `CWYM_FILTER_LLM_MAX_TOKENS` | `2048` | Token budget for `FilterAgent`'s condition-extraction LLM call |
+| `CWYM_FILTER_LLM_MAX_TOKENS` | `4096` | Token budget for `FilterAgent`'s condition-extraction LLM call (OAF and WFS) |
 
 ## Setup
 

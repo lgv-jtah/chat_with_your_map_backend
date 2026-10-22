@@ -71,6 +71,13 @@ class GeodataSettings:
             "CWYM_ADDRESS_SEARCH_URL", "https://api.hamburg.de/addr_search"
         )
     )
+    # Official borough/district outlines (OGC API Features) - replace the
+    # address search's bounding rectangles (see area_boundaries.py).
+    area_boundaries_url: str = field(
+        default_factory=lambda: os.environ.get(
+            "CWYM_AREA_BOUNDARIES_URL", "https://api.hamburg.de/datasets/v1/verwaltungsgrenzen"
+        )
+    )
     address_result_size: int = field(
         default_factory=lambda: _env_int("CWYM_ADDRESS_RESULT_SIZE", 20)
     )
@@ -125,7 +132,7 @@ class GeodataSettings:
     # Same rationale as layer_llm_max_tokens - condition extraction is a
     # small-output task but Qwen3's reasoning trace precedes it.
     filter_llm_max_tokens: int = field(
-        default_factory=lambda: _env_int("CWYM_FILTER_LLM_MAX_TOKENS", 2048)
+        default_factory=lambda: _env_int("CWYM_FILTER_LLM_MAX_TOKENS", 4096)
     )
 
     # UDP agent (cmym-agent-architecture.md Section 13): the self-hosted

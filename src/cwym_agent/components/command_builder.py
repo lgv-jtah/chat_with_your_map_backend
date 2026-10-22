@@ -164,6 +164,11 @@ class CommandBuilderComponent:
         if aggregated.get("analysis_result") is not None:
             return self._build_analysis_commands(aggregated["analysis_result"])
 
+        # "Grundschulen in Hoheluft" with Hoheluft-Ost and -West: showing
+        # either would be a guess - change nothing, the answer asks back.
+        if aggregated.get("ambiguous_location") is not None:
+            return []
+
         if aggregated.get("filter_result") is not None:
             return self._build_filter_commands(aggregated, context)
 

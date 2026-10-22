@@ -62,7 +62,7 @@ class Qwen3Settings:
     # 4096 and re-verified the same failing scenario's success rate
     # improved before committing this value.
     max_tokens_plan: int = field(
-        default_factory=lambda: _env_int("CWYM_QWEN3_MAX_TOKENS_PLAN", 4096)
+        default_factory=lambda: _env_int("CWYM_QWEN3_MAX_TOKENS_PLAN", 6144)
     )
     # Same failure mode as max_tokens_plan above, this time on the final
     # reply: TextResponseComponent's prompt (context block + resolved

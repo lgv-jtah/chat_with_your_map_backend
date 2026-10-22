@@ -217,3 +217,50 @@ class TestResolve:
         source = json.loads(captured["params"]["source"])
         assert source["id"] == "addr_search"
         assert source["params"]["query_str"] == "Wandsbek"
+
+
+class TestAmbiguousAreas:
+    """Hits mirror Hamburg's real answers (checked live)."""
+
+    def test_two_districts_starting_with_the_query(self):
+        resolver = _client_for(
+            [
+                _hit("Hoheluftchaussee", 9.97, 53.58, "Street", 70.0),
+                _hit("Hoheluft-Ost", 9.976, 53.584, "District", 66.2),
+                _hit("Hoheluft-West", 9.966, 53.579, "District", 60.0),
+            ]
+        )
+
+        result = resolver.resolve("Hoheluft")
+
+        assert result.name == "Hoheluft-Ost"
+        assert result.alternatives == ["Hoheluft-West"]
+
+    def test_exact_area_hit_is_not_ambiguous(self):
+        resolver = _client_for(
+            [
+                _hit("Altona-Altstadt", 9.93, 53.55, "District", 70.0),
+                _hit("Altona", 9.93, 53.56, "County", 65.0),
+                _hit("Altona-Nord", 9.94, 53.57, "District", 60.0),
+            ]
+        )
+
+        result = resolver.resolve("Altona")
+
+        assert result.name == "Altona"
+        assert result.alternatives == []
+
+    def test_single_prefix_match_is_not_ambiguous(self):
+        resolver = _client_for([_hit("Barmbek-Nord", 10.04, 53.6, "District", 60.0)])
+
+        assert resolver.resolve("Barmbek").alternatives == []
+
+    def test_streets_never_count(self):
+        resolver = _client_for(
+            [
+                _hit("Hoheluft-Ost", 9.976, 53.584, "District", 66.2),
+                _hit("Hoheluft-Weg", 9.97, 53.58, "Street", 80.0),
+            ]
+        )
+
+        assert resolver.resolve("Hoheluft").alternatives == []

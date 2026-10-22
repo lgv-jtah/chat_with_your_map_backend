@@ -35,6 +35,7 @@ from ag_ui.core import TextMessageContentEvent, TextMessageEndEvent, TextMessage
 from haystack import component
 
 from cwym_agent.bridge import AGUIEventBridge
+from cwym_agent.geodata import clarification
 from cwym_agent.geodata.conversation_context import ConversationContext, render_context_block
 from cwym_agent.geodata.portal_catalog_resolver import LayerCatalog
 from cwym_agent.llm.qwen3_client import Qwen3Client
@@ -56,6 +57,8 @@ class TextResponseComponent:
         bridge: AGUIEventBridge | None = None,
     ):
         verbatim = self._analysis_reply(aggregated.get("analysis_result"))
+        if verbatim is None:
+            verbatim = self._ambiguous_location_reply(aggregated.get("ambiguous_location"))
         if verbatim is not None:
             if bridge:
                 message_id = str(uuid.uuid4())
@@ -95,6 +98,16 @@ class TextResponseComponent:
             "geliefert, die Karte wurde nicht verändert. Bitte versuche es in ein "
             "paar Minuten noch einmal."
         )
+
+    @staticmethod
+    def _ambiguous_location_reply(location) -> str | None:
+        """A fixed question back, not LLM text: it has to name exactly the
+        areas the address search found, and its wording is read back by
+        ``clarification.resolve_reply`` when the user answers."""
+
+        if location is None:
+            return None
+        return clarification.question([location.name, *location.alternatives])
 
     def _build_response_prompt(
         self,
@@ -172,6 +185,20 @@ class TextResponseComponent:
             facts.append(f"Filter aufgehoben, wieder alle Objekte sichtbar: {name}")
 
         resolved = "; ".join(facts)
+        if aggregated.get("filter_failed"):
+            what = f"„{layer.name}“" if layer else "die Kartenebene"
+            where = f" auf {locations[0].name}" if locations else ""
+            return (
+                f"{context_note}"
+                f"Nutzeranfrage: \"{query}\"\n"
+                f"Aufgelöste Informationen: {resolved}\n"
+                f"WICHTIG: Die gewünschte Einschränkung{where} konnte NICHT angewendet "
+                f"werden. Angezeigt wird die gesamte Ebene {what} ohne Filter. "
+                "Formuliere eine kurze, ehrliche deutsche Antwort: Sag klar, dass "
+                "nicht gefiltert werden konnte und die vollständige Ebene zu sehen "
+                "ist (die Karte zeigt aber auf das gewünschte Gebiet). Behaupte "
+                "NICHT, dass nur die gewünschten Objekte angezeigt werden."
+            )
         return (
             f"{context_note}"
             f"Nutzeranfrage: \"{query}\"\n"

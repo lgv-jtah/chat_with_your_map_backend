@@ -505,3 +505,14 @@ class TestAnalysisCommands:
         types = [cmd["type"] for cmd in builder._build_commands(aggregated)]
 
         assert types == ["CLEAR_RESULT_LAYERS", "ADD_RESULT_LAYER"]
+
+
+class TestAmbiguousLocation:
+    def test_no_commands_for_an_ambiguous_place(self):
+        hoheluft = LocationMatch(
+            name="Hoheluft-Ost", latitude=53.58, longitude=9.97, confidence=0.6,
+            boundary=_WANDSBEK_BOUNDARY, extent=_WANDSBEK_EXTENT, kind="stadtteil", alternatives=["Hoheluft-West"],
+        )
+        aggregated = {**_aggregated("Zeigen", layer=_LAYER, locations=[hoheluft]), "ambiguous_location": hoheluft}
+
+        assert builder._build_commands(aggregated) == []
