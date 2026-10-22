@@ -470,3 +470,15 @@ class TestBuildInlineCatalog:
         catalog = build_inline_catalog([{"id": "1", "name": "a"}, {"id": "1", "name": "b"}])
 
         assert catalog.names() == {"1": "b"}
+
+    def test_runtime_layers_are_dropped(self):
+        catalog = build_inline_catalog(
+            [
+                {"id": "27764", "name": "StadtRAD", "typ": "OAF"},
+                {"id": "cwym_filter_overlay", "name": "StadtRAD – Filter: Wandsbek", "typ": "VECTORBASE"},
+                {"id": "cwym_result_x", "name": "UDP", "typ": None},
+                {"id": "importDrawLayer", "name": "importDrawLayer", "typ": "vectorbase"},
+            ]
+        )
+
+        assert set(catalog.names()) == {"27764"}

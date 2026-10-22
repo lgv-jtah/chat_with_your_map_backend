@@ -215,6 +215,16 @@ def _build_layer_catalog(config_json: dict, services_json) -> "LayerCatalog":
     return LayerCatalog(layers)
 
 
+_RUNTIME_LAYER_ID_PREFIX = "cwym_"
+_RUNTIME_LAYER_TYPES = frozenset({"VECTORBASE"})
+
+
+def _is_runtime_layer(layer_id: str, typ: object) -> bool:
+    return layer_id.startswith(_RUNTIME_LAYER_ID_PREFIX) or (
+        isinstance(typ, str) and typ.upper() in _RUNTIME_LAYER_TYPES
+    )
+
+
 def build_inline_catalog(layers: Iterable[Mapping[str, object]]) -> "LayerCatalog":
     """Builds a ``LayerCatalog`` from the layer list the frontend sent
     inline (``portal_context.layers``) instead of from two fetched URLs.
@@ -227,11 +237,20 @@ def build_inline_catalog(layers: Iterable[Mapping[str, object]]) -> "LayerCatalo
     an ``id``; ``name``/``typ``/``url``/``collection`` are optional and
     produce the same ``LayerMatch`` records ``_build_layer_catalog``
     does. Size/field validation happens at the API boundary
-    (``api.main.PortalLayer``) before this is called."""
+    (``api.main.PortalLayer``) before this is called.
+
+    Runtime layers the frontend creates itself - the chat addon's own
+    result layers (ids ``cwym_...``) and draw/import layers (typ
+    ``VECTORBASE``, in-memory features without a service URL) - are
+    dropped: they are not searchable services, and treating them as
+    known layers would let them into the planner's context and layer
+    scoping. The frontend already leaves them out; this is a safety net."""
 
     result: dict[str, LayerMatch] = {}
     for entry in layers:
         layer_id = str(entry["id"])
+        if _is_runtime_layer(layer_id, entry.get("typ")):
+            continue
         result[layer_id] = LayerMatch(
             name=entry.get("name") or layer_id,
             layer_id=layer_id,
