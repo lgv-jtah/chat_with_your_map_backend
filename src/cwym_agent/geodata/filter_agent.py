@@ -5,8 +5,9 @@ own ``/collections/{id}/items`` endpoint
 
 Bypasses Masterportal's native Filter tool entirely (see the doc for
 why - no OAF support server-side, predefined-query-only design, open
-bugs in exactly this territory) and works only against OAF-typed
-layers, the one Hamburg service type CQL2 filtering is defined for.
+bugs in exactly this territory). Works against OAF layers (CQL2, below)
+and WFS layers (FES 2.0, ``wfs_filter``) - both the same "attribute
+conditions AND intersect with the area" filter, run on the server.
 
 Qwen3 extracts attribute conditions as small structured JSON
 (field/operator/value - the same shape ``RealDataServices``' other
@@ -39,9 +40,13 @@ import time
 from typing import Any
 
 import httpx
+from shapely.geometry import shape
+from shapely.prepared import prep
 
+from cwym_agent.geodata.portal_catalog_resolver import name_key
 from cwym_agent.geodata.settings import GeodataSettings
 from cwym_agent.geodata.types import FilterCondition, FilterResult, LayerMatch, LocationMatch
+from cwym_agent.geodata.wfs_filter import WfsClient, boundary_to_gml, build_filter, condition_to_fes
 
 logger = logging.getLogger(__name__)
 
@@ -52,7 +57,10 @@ _CONDITION_EXTRACTION_PROMPT_TEMPLATE = (
     "Anfrage: \"{query}\"\n\n"
     "Antworte NUR mit einem JSON-Array von Bedingungen der Form "
     "{{\"field\": <Feldname>, \"operator\": <eq|ne|lt|lte|gt|gte|contains>, "
-    "\"value\": <Wert>}}. Verwende NUR Felder aus der obigen Liste. Wenn "
+    "\"value\": <Wert>}}. Verwende NUR Felder aus der obigen Liste. Sind "
+    "zu einem Feld Beispielwerte angegeben, verwende den passenden Wert "
+    "genau so geschrieben. Ein Ortsname (Stadtteil, Bezirk) ist KEINE "
+    "Attributbedingung - die räumliche Einschränkung erfolgt separat. Wenn "
     "die Anfrage keine konkrete Attributbedingung nennt (z.B. nur einen "
     "Ort), antworte mit einem leeren Array: []"
 )
@@ -126,6 +134,54 @@ def _boundary_to_wkt(boundary: dict) -> str | None:
     return None
 
 
+def _envelope(boundary: dict) -> dict | None:
+    """The bounding rectangle of an area, as a GeoJSON Polygon - what the
+    service is queried with. The real outline has up to thousands of
+    vertices, too big for an OAF filter in a URL; the exact check against
+    it happens afterwards (``_inside``)."""
+
+    try:
+        min_x, min_y, max_x, max_y = shape(boundary).bounds
+    except (ValueError, TypeError, AttributeError):
+        return None
+    return {
+        "type": "Polygon",
+        "coordinates": [[[min_x, min_y], [max_x, min_y], [max_x, max_y], [min_x, max_y], [min_x, min_y]]],
+    }
+
+
+def _inside(features: list[dict], boundary: dict) -> list[dict]:
+    """The features that really intersect the area's outline (the service
+    was only asked for its bounding rectangle). Features without a usable
+    geometry are dropped."""
+
+    try:
+        area = prep(shape(boundary))
+    except (ValueError, TypeError, AttributeError):
+        return features
+    kept = []
+    for feature in features:
+        try:
+            if feature.get("geometry") and area.intersects(shape(feature["geometry"])):
+                kept.append(feature)
+        except (ValueError, TypeError, AttributeError):
+            continue
+    return kept
+
+
+def _area_result(features: list[dict], location: LocationMatch | None, limit: int, number_matched):
+    """Applies the exact area check and works out the total: exact when
+    the service returned everything it matched, unknown (None) when the
+    result was cut at ``limit`` - the server's own total refers to the
+    rectangle, not the area."""
+
+    if not (location and location.boundary):
+        return features, number_matched
+    kept = _inside(features, location.boundary)
+    complete = len(features) < limit and (number_matched is None or number_matched <= len(features))
+    return kept, len(kept) if complete else None
+
+
 class QueryablesCache:
     """Lazily fetches and TTL-caches a collection's ``/queryables``
     schema, keyed by ``(api_url, collection)``."""
@@ -173,6 +229,7 @@ class FilterAgent:
         llm: Any = None,
         http_client: httpx.Client | None = None,
         queryables_cache: QueryablesCache | None = None,
+        wfs_client: WfsClient | None = None,
     ):
         self.settings = settings or GeodataSettings()
         if llm is None:
@@ -182,6 +239,7 @@ class FilterAgent:
         self.llm = llm
         self._client = http_client or httpx.Client(timeout=self.settings.timeout)
         self.queryables_cache = queryables_cache or QueryablesCache(self.settings, self._client)
+        self.wfs = wfs_client or WfsClient(self.settings, self._client)
 
     def filter(
         self,
@@ -205,23 +263,22 @@ class FilterAgent:
         (the default) ignores ``prior_conditions`` entirely.
         """
 
-        if layer is None or layer.typ != "OAF" or not layer.collection or not layer.url:
-            if layer is not None:
-                logger.info(
-                    "FilterAgent: layer %r (typ=%r) is not OGC API Features-filterable, skipping",
-                    layer.name,
-                    layer.typ,
-                )
+        if layer is None:
+            return None
+        if layer.typ == "WFS" and layer.url and layer.feature_type:
+            return self._filter_wfs(query, layer, location, mode, prior_conditions)
+        if layer.typ != "OAF" or not layer.collection or not layer.url:
+            logger.info(
+                "FilterAgent: layer %r (typ=%r) is neither OGC API Features- nor WFS-filterable, skipping",
+                layer.name,
+                layer.typ,
+            )
             return None
 
         api_url = layer.url.rstrip("/")
         queryables = self.queryables_cache.get(api_url, layer.collection)
         new_conditions = self._extract_conditions(query, queryables) if queryables else []
-        conditions = (
-            self._merge_conditions(prior_conditions, new_conditions)
-            if mode == "refine" and prior_conditions
-            else new_conditions
-        )
+        conditions = self._combine(mode, prior_conditions, new_conditions)
         attribute_clauses = [
             clause for clause in (_condition_to_cql2(condition) for condition in conditions) if clause
         ]
@@ -229,7 +286,8 @@ class FilterAgent:
         spatial_clause = None
         if location and location.boundary and queryables:
             geometry_field = self.queryables_cache.geometry_field(queryables)
-            wkt = _boundary_to_wkt(location.boundary)
+            envelope = _envelope(location.boundary)
+            wkt = _boundary_to_wkt(envelope) if envelope else None
             if geometry_field and wkt:
                 spatial_clause = f"S_INTERSECTS({geometry_field}, {wkt})"
 
@@ -253,15 +311,99 @@ class FilterAgent:
             logger.warning("FilterAgent: OGC API Features query failed for %r (%s)", layer.name, exc)
             return None
 
-        features = data.get("features") or []
+        features, number_matched = _area_result(
+            data.get("features") or [], location, self.settings.filter_result_limit, data.get("numberMatched")
+        )
         return FilterResult(
             layer_id=layer.layer_id,
             features={"type": "FeatureCollection", "features": features},
-            number_matched=data.get("numberMatched"),
+            number_matched=number_matched,
             label=location.name if location else None,
             area_kind=location.kind if location else None,
             conditions=conditions,
         )
+
+    def _filter_wfs(
+        self,
+        query: str,
+        layer: LayerMatch,
+        location: LocationMatch | None,
+        mode: str,
+        prior_conditions: list[FilterCondition] | None,
+    ) -> FilterResult | None:
+        """The WFS counterpart of the CQL2 path above: attribute conditions
+        AND ``Intersects`` with the location's boundary, as an FES 2.0
+        GetFeature request (see ``wfs_filter``)."""
+
+        url = layer.url.split("?")[0]
+        schema = self.wfs.schema(url, layer.feature_type)
+        if schema is None:
+            return None
+
+        queryables = {name: {"type": xsd_type} for name, xsd_type in schema.fields.items()}
+        new_conditions = self._extract_conditions(query, queryables, schema.examples)
+        new_conditions += self._conditions_from_layer_name(layer, schema.examples, new_conditions)
+        conditions = self._combine(mode, prior_conditions, new_conditions)
+        clauses = [clause for clause in (condition_to_fes(condition) for condition in conditions) if clause]
+
+        if location and location.boundary and schema.geometry_field:
+            envelope = _envelope(location.boundary)
+            gml = boundary_to_gml(envelope) if envelope else None
+            if gml:
+                clauses.insert(
+                    0,
+                    f"<fes:Intersects><fes:ValueReference>{schema.geometry_field}</fes:ValueReference>"
+                    f"{gml}</fes:Intersects>",
+                )
+
+        if not clauses:
+            logger.info("FilterAgent: nothing to filter %r by, skipping", layer.name)
+            return None
+
+        result = self.wfs.get_features(
+            url, layer.feature_type, schema.namespace, build_filter(clauses), self.settings.filter_result_limit
+        )
+        if result is None:
+            return None
+        data, number_matched = result
+        features, number_matched = _area_result(
+            data.get("features") or [], location, self.settings.filter_result_limit, number_matched
+        )
+
+        return FilterResult(
+            layer_id=layer.layer_id,
+            features={"type": "FeatureCollection", "features": features},
+            number_matched=number_matched,
+            label=location.name if location else None,
+            area_kind=location.kind if location else None,
+            conditions=conditions,
+        )
+
+    @staticmethod
+    def _conditions_from_layer_name(
+        layer: LayerMatch, examples: dict[str, list[str]], extracted: list[FilterCondition]
+    ) -> list[FilterCondition]:
+        """A portal layer like "Gymnasien" is the schools WFS restricted to
+        one category (its own wfsFilter: kapitelbezeichnung = "Gymnasien").
+        If the LLM extracted no condition for the field that has the layer's
+        name as one of its values, that condition is added - found live,
+        the extraction otherwise sometimes returned nothing and all school
+        types in the area were shown as "Gymnasien"."""
+
+        wanted = name_key(layer.name)
+        constrained = {condition.field for condition in extracted}
+        for field_name, values in examples.items():
+            if field_name in constrained:
+                continue
+            value = next((v for v in values if name_key(v) == wanted), None)
+            if value is not None:
+                return [FilterCondition(field=field_name, operator="eq", value=value)]
+        return []
+
+    def _combine(
+        self, mode: str, prior: list[FilterCondition] | None, new: list[FilterCondition]
+    ) -> list[FilterCondition]:
+        return self._merge_conditions(prior, new) if mode == "refine" and prior else new
 
     @staticmethod
     def _merge_conditions(
@@ -275,9 +417,13 @@ class FilterAgent:
         kept = [condition for condition in prior if condition.field not in new_fields]
         return kept + new
 
-    def _extract_conditions(self, query: str, queryables: dict) -> list[FilterCondition]:
+    def _extract_conditions(
+        self, query: str, queryables: dict, examples: dict[str, list[str]] | None = None
+    ) -> list[FilterCondition]:
+        examples = examples or {}
         fields = "\n".join(
             f"- {name} ({schema.get('type', 'string')})"
+            + (f" - Beispielwerte: {', '.join(examples[name])}" if examples.get(name) else "")
             for name, schema in queryables.items()
             if schema.get("x-ogc-role") != "primary-geometry"
         )

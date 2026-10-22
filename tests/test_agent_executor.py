@@ -10,7 +10,7 @@ from ag_ui.core import RunAgentInput, UserMessage
 
 from cwym_agent.components.agent_executor import AgentExecutorComponent
 from cwym_agent.geodata.conversation_context import ConversationContext, MapStateIn, build_context
-from cwym_agent.geodata.portal_catalog_resolver import LayerCatalog
+from cwym_agent.geodata.portal_catalog_resolver import LayerCatalog, build_inline_catalog
 from cwym_agent.geodata.types import (
     ActionMatch,
     AnalysisResult,
@@ -336,7 +336,8 @@ class TestFilterAgentToolCallResultView:
         [(name, _args, emitted)] = bridge.tool_calls
         assert name == "layer_resolver"
         assert emitted == {"name": "Some Layer", "layer_id": "1", "confidence": 0.9, "description": "",
-                            "typ": None, "url": None, "collection": None}
+                            "typ": None, "url": None, "collection": None,
+                            "feature_type": None, "feature_ns": None}
 
 
 class TestUdpAnalysisDispatch:
@@ -396,3 +397,124 @@ class TestToolCallStreaming:
             ("running", "layer_resolver"),
             ("result", "layer_resolver"),
         ]
+
+
+class TestPortalLayers:
+    catalog = build_inline_catalog(
+        [
+            {"id": "8712", "name": "WFS Schulen", "typ": "WFS", "url": "https://x", "featureType": "staatliche_schulen"},
+            {"id": "8712.1", "name": "Grundschulen", "typ": "WFS", "url": "https://x", "featureType": "staatliche_schulen"},
+        ]
+    )
+
+    def test_portal_name_wins_before_the_central_search(self):
+        data_services = FakeDataServices()
+        component = AgentExecutorComponent(data_services=data_services)
+
+        result = component.run(
+            {"steps": [{"agent_name": "layer_resolver", "args": {"query": "Grundschulen"}}]},
+            layer_catalog=self.catalog,
+        )
+
+        assert result["execution_log"][0]["result"].layer_id == "8712.1"
+        assert data_services.resolve_layer_calls == []
+
+    def test_unknown_name_still_uses_the_central_search(self):
+        data_services = FakeDataServices()
+        component = AgentExecutorComponent(data_services=data_services)
+
+        component.run(
+            {"steps": [{"agent_name": "layer_resolver", "args": {"query": "Fahrradstationen"}}]},
+            layer_catalog=self.catalog,
+        )
+
+        assert data_services.resolve_layer_calls == [("Fahrradstationen", None)]
+
+    def test_filter_gets_the_wfs_details_from_the_portal(self):
+        class CentralSearchResult(FakeDataServices):
+            def resolve_layer(self, query, allowed_layer_ids=None):
+                return LayerMatch("Staatliche Schulen Hamburg", "8712", 0.03, typ="WFS", url="https://x")
+
+        data_services = CentralSearchResult()
+        AgentExecutorComponent(data_services=data_services).run(
+            _plan("layer_resolver", "filter_agent"), layer_catalog=self.catalog
+        )
+
+        [(_, layer, _, _, _)] = data_services.apply_filter_calls
+        assert layer.feature_type == "staatliche_schulen"
+        assert layer.name == "Staatliche Schulen Hamburg"
+
+    def test_ambiguous_location_is_not_filtered(self):
+        class Ambiguous(FakeDataServices):
+            def resolve_locations(self, query):
+                return [LocationMatch("Hoheluft-Ost", 53.58, 9.97, 0.6, alternatives=["Hoheluft-West"])]
+
+        data_services = Ambiguous()
+        result = AgentExecutorComponent(data_services=data_services).run(
+            _plan("location_extractor", "layer_resolver", "filter_agent")
+        )
+
+        assert data_services.apply_filter_calls == []
+        assert result["execution_log"][-1] == {"agent_name": "filter_agent", "result": None}
+
+
+class TestImplicitFilter:
+    """A filterable layer in an area is filtered even when the planner
+    forgot filter_agent - found live in 3 of 5 runs."""
+
+    _AREA = LocationMatch(
+        "Hoheluft-West", 53.58, 9.97, 0.9,
+        boundary={"type": "Polygon", "coordinates": [[[9.9, 53.5], [10.0, 53.5], [9.9, 53.6], [9.9, 53.5]]]},
+    )
+
+    def _services(self, layer, location=None):
+        area = location or self._AREA
+
+        class Services(FakeDataServices):
+            def resolve_layer(self, query, allowed_layer_ids=None):
+                return layer
+
+            def resolve_locations(self, query):
+                return [area]
+
+        return Services()
+
+    def _steps(self, *agents):
+        queries = {"layer_resolver": "Grundschulen", "location_extractor": "Hoheluft-West", "action_detector": "q"}
+        return {"steps": [{"agent_name": a, "args": {"query": queries[a]}} for a in agents]}
+
+    def test_wfs_layer_in_an_area_is_filtered(self):
+        layer = LayerMatch("Grundschulen", "8712.1", 1.0, typ="WFS", url="https://x", feature_type="staatliche_schulen")
+        services = self._services(layer)
+        bridge = FakeBridge()
+
+        result = AgentExecutorComponent(data_services=services).run(
+            self._steps("location_extractor", "layer_resolver", "action_detector"), bridge=bridge
+        )
+
+        [(query, filtered_layer, location, _, _)] = services.apply_filter_calls
+        assert query == "Grundschulen in Hoheluft-West"
+        assert filtered_layer.layer_id == "8712.1" and location.name == "Hoheluft-West"
+        assert result["execution_log"][-1]["agent_name"] == "filter_agent"
+        assert bridge.tool_calls[-1][0] == "filter_agent"
+
+    def test_not_for_unfilterable_layers_or_point_locations(self):
+        wms = self._services(LayerMatch("Luftbilder", "1", 1.0, typ="WMS", url="https://x"))
+        AgentExecutorComponent(data_services=wms).run(self._steps("location_extractor", "layer_resolver"))
+        assert wms.apply_filter_calls == []
+
+        street = LocationMatch("Mönckebergstraße", 53.55, 10.0, 0.9)
+        oaf = self._services(LayerMatch("Kitas", "2", 1.0, typ="OAF", url="https://x", collection="kitas"), street)
+        AgentExecutorComponent(data_services=oaf).run(self._steps("location_extractor", "layer_resolver"))
+        assert oaf.apply_filter_calls == []
+
+    def test_not_twice_when_planned(self):
+        layer = LayerMatch("Kitas", "2", 1.0, typ="OAF", url="https://x", collection="kitas")
+        services = self._services(layer)
+
+        AgentExecutorComponent(data_services=services).run(
+            {"steps": [*self._steps("location_extractor", "layer_resolver")["steps"],
+                       {"agent_name": "filter_agent", "args": {"query": "Kitas in Hoheluft-West"}}]}
+        )
+
+        assert len(services.apply_filter_calls) == 1

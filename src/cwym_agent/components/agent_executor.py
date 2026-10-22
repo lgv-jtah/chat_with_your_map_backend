@@ -9,7 +9,7 @@ provided.
 """
 
 import logging
-from dataclasses import asdict, is_dataclass
+from dataclasses import asdict, is_dataclass, replace
 from typing import Any
 
 from haystack import component
@@ -18,7 +18,7 @@ from cwym_agent.bridge import AGUIEventBridge
 from cwym_agent.geodata.conversation_context import ConversationContext
 from cwym_agent.geodata.portal_catalog_resolver import LayerCatalog
 from cwym_agent.geodata.real_data_services import RealDataServices
-from cwym_agent.geodata.types import FilterCondition
+from cwym_agent.geodata.types import FilterCondition, LayerMatch
 
 logger = logging.getLogger(__name__)
 
@@ -88,6 +88,20 @@ def _dependencies_first(steps: list[dict]) -> list[dict]:
     return ordered
 
 
+def _with_portal_details(layer: LayerMatch, portal_layer: LayerMatch | None) -> LayerMatch:
+    """Fills the service details a layer is missing (e.g. the WFS feature
+    type) from the portal's own entry for the same id."""
+
+    if portal_layer is None:
+        return layer
+    details = {
+        name: getattr(portal_layer, name)
+        for name in ("typ", "url", "collection", "feature_type", "feature_ns")
+        if getattr(layer, name) is None and getattr(portal_layer, name) is not None
+    }
+    return replace(layer, **details) if details else layer
+
+
 @component
 class AgentExecutorComponent:
     def __init__(self, data_services: Any | None = None):
@@ -129,7 +143,59 @@ class AgentExecutorComponent:
 
             execution_log.append({"agent_name": agent_name, "result": result})
 
+        implicit_query = self._implicit_filter_query(plan_json.get("steps", []), results_by_agent, layer_catalog)
+        if implicit_query is not None:
+            logger.info("agent_executor: layer + area resolved but no filter planned - filtering %r", implicit_query)
+            args = {"query": implicit_query}
+            call_id = bridge.tool_call_start("filter_agent", args) if bridge else None
+            result = self._run_sub_agent(
+                "filter_agent", args, allowed_layer_ids, results_by_agent, context, layer_catalog
+            )
+            results_by_agent["filter_agent"] = result
+            if bridge:
+                bridge.tool_call_result(call_id, _tool_call_result_view("filter_agent", _serializable(result)))
+            execution_log.append({"agent_name": "filter_agent", "result": result})
+
         return {"execution_log": execution_log}
+
+    @staticmethod
+    def _implicit_filter_query(
+        steps: list[dict], results_by_agent: dict[str, object], layer_catalog: LayerCatalog | None
+    ) -> str | None:
+        """A layer in an area ("Grundschulen in Hoheluft-West") means only
+        that area's features - but the planner doesn't always plan
+        filter_agent for it: found live, for the same question it did in
+        only 2 of 5 runs and otherwise switched on the whole layer. So when
+        a filterable layer (OAF, or WFS with a feature type) and an area
+        with a boundary are resolved and nothing else decides the turn,
+        the filter runs anyway. Returns the filter query, or None."""
+
+        if "filter_agent" in results_by_agent or "udp_analysis" in results_by_agent:
+            return None
+        layer = results_by_agent.get("layer_resolver")
+        locations = results_by_agent.get("location_extractor") or []
+        location = locations[0] if locations else None
+        if layer is None or location is None or not location.boundary or location.alternatives:
+            return None
+
+        action = results_by_agent.get("action_detector")
+        if action is not None and (
+            action.action_type == "Öffne" or action.deactivate_layer_ids or action.clear_filter_layer_ids
+        ):
+            return None
+
+        if layer_catalog is not None:
+            layer = _with_portal_details(layer, layer_catalog.get(layer.layer_id))
+        filterable = (layer.typ == "OAF" and layer.collection and layer.url) or (
+            layer.typ == "WFS" and layer.feature_type and layer.url
+        )
+        if not filterable:
+            return None
+
+        layer_query = next(
+            (s.get("args", {}).get("query") for s in steps if s.get("agent_name") == "layer_resolver"), None
+        )
+        return f"{layer_query or layer.name} in {location.name}"
 
     def _run_sub_agent(
         self,
@@ -145,6 +211,14 @@ class AgentExecutorComponent:
         if agent_name == "location_extractor":
             return self.data_services.resolve_locations(query)
         if agent_name == "layer_resolver":
+            # A layer the portal itself names exactly like the query wins
+            # before the central search - which only knows Hamburg's
+            # catalog ids and can't find a portal-only variant such as
+            # "Grundschulen" (8712.1 = the schools WFS 8712 with a filter).
+            portal_match = layer_catalog.match_name(query) if layer_catalog is not None else None
+            if portal_match is not None:
+                logger.info("agent_executor: %r matched portal layer %s by name", query, portal_match.layer_id)
+                return portal_match
             return self.data_services.resolve_layer(query, allowed_layer_ids=allowed_layer_ids)
         if agent_name == "action_detector":
             action = self.data_services.detect_action(query)
@@ -183,8 +257,18 @@ class AgentExecutorComponent:
         if layer is None and target_layer_id and layer_catalog is not None:
             layer = layer_catalog.get(target_layer_id)
 
+        # The central search knows a layer's service type/URL but not a
+        # WFS feature type - the portal's own layer list does.
+        if layer is not None and layer_catalog is not None:
+            layer = _with_portal_details(layer, layer_catalog.get(layer.layer_id))
+
         locations = results_by_agent.get("location_extractor") or []
         location = locations[0] if locations else None
+        if location is not None and location.alternatives:
+            # "Hoheluft" = Hoheluft-Ost or -West: filtering one of them
+            # would be a guess - the answer asks back instead.
+            logger.info("agent_executor: location %r is ambiguous, not filtering", location.name)
+            return None
 
         mode = args.get("mode", "replace")
         prior_conditions = None

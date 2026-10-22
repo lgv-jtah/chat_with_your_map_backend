@@ -13,6 +13,7 @@ import httpx
 
 from cwym_agent.geodata.portal_catalog_resolver import (
     PortalCatalogResolver,
+    _build_layer_catalog,
     _extract_layer_ids,
     build_inline_catalog,
 )
@@ -482,3 +483,68 @@ class TestBuildInlineCatalog:
         )
 
         assert set(catalog.names()) == {"27764"}
+
+
+class TestPortalOnlyLayers:
+    def test_dotted_portal_variant_uses_its_service_and_own_name(self):
+        config = {
+            "layerConfig": {
+                "subjectlayer": {
+                    "elements": [
+                        {"id": "8712", "name": "WFS Schulen"},
+                        {"id": "8712.1", "name": "Grundschulen", "wfsFilter": "x.xml"},
+                    ]
+                }
+            }
+        }
+        services = [
+            {
+                "id": "8712",
+                "name": "Staatliche Schulen",
+                "typ": "WFS",
+                "url": "https://geodienste.hamburg.de/HH_WFS_Schulen",
+                "featureType": "staatliche_schulen",
+                "featureNS": "http://www.deegree.org/de.hh.up",
+            }
+        ]
+
+        catalog = _build_layer_catalog(config, services)
+
+        primary = catalog.get("8712.1")
+        assert primary.name == "Grundschulen"
+        assert (primary.typ, primary.feature_type) == ("WFS", "staatliche_schulen")
+        assert catalog.name("8712") == "WFS Schulen"
+
+    def test_inline_layers_carry_wfs_details(self):
+        catalog = build_inline_catalog(
+            [{"id": "8712.1", "name": "Grundschulen", "typ": "WFS", "featureType": "staatliche_schulen", "featureNS": "ns"}]
+        )
+
+        assert catalog.get("8712.1").feature_type == "staatliche_schulen"
+        assert catalog.get("8712.1").feature_ns == "ns"
+
+
+class TestMatchName:
+    catalog = build_inline_catalog(
+        [
+            {"id": "8712", "name": "WFS Schulen"},
+            {"id": "8712.1", "name": "Grundschulen"},
+            {"id": "8712.3", "name": "Gymnasien"},
+            {"id": "27764", "name": "StadtRAD-Stationen Hamburg"},
+        ]
+    )
+
+    def test_exact_name_ignoring_case_and_plural(self):
+        assert self.catalog.match_name("Grundschulen").layer_id == "8712.1"
+        assert self.catalog.match_name("grundschule").layer_id == "8712.1"
+        assert self.catalog.match_name("Stadtrad Stationen Hamburg").layer_id == "27764"
+
+    def test_no_partial_matches(self):
+        assert self.catalog.match_name("Schulen") is None
+        assert self.catalog.match_name("Fahrradstationen") is None
+        assert self.catalog.match_name("") is None
+
+    def test_ambiguous_names_match_nothing(self):
+        catalog = build_inline_catalog([{"id": "1", "name": "Schulen"}, {"id": "2", "name": "schule"}])
+
+        assert catalog.match_name("Schulen") is None
