@@ -17,10 +17,12 @@ resolving correctly if the planner can see that a Schulen layer is
 already active.
 """
 
+import logging
 from typing import Any
 
 from haystack import component
 
+from cwym_agent import observability
 from cwym_agent.bridge import AGUIEventBridge
 from cwym_agent.geodata.conversation_context import (
     PLANNING_RULES_BLOCK,
@@ -29,6 +31,8 @@ from cwym_agent.geodata.conversation_context import (
 )
 from cwym_agent.geodata.portal_catalog_resolver import LayerCatalog
 from cwym_agent.llm.qwen3_client import Qwen3Client
+
+logger = logging.getLogger(__name__)
 
 
 @component
@@ -45,6 +49,7 @@ class MasterAgentComponent:
         bridge: AGUIEventBridge | None = None,
     ):
         prompt = self._build_planning_prompt(query, context, layer_catalog)
+        observability.set_planning_prompt(prompt)
 
         if bridge:
             reasoning_tokens: list[str] = []
@@ -55,6 +60,14 @@ class MasterAgentComponent:
             bridge.reasoning("".join(reasoning_tokens))
         else:
             plan = self.llm.plan(prompt)
+
+        steps = plan.get("steps", [])
+        if not steps:
+            logger.info("master_agent: empty plan - no sub-agent will run")
+        elif observability.content_logged():
+            logger.info("master_agent: plan %s", [(s["agent_name"], s.get("args", {})) for s in steps])
+        else:
+            logger.info("master_agent: plan %s", [s["agent_name"] for s in steps])
 
         return {"plan_json": plan}
 

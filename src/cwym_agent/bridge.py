@@ -12,6 +12,7 @@ requires no pipeline graph changes: components simply accept an optional
 import json
 import queue
 import uuid
+from typing import TYPE_CHECKING
 
 from ag_ui.core import (
     ReasoningEndEvent,
@@ -29,6 +30,9 @@ from ag_ui.core import (
     ToolCallStartEvent,
 )
 
+if TYPE_CHECKING:
+    from cwym_agent.observability import RunTrace
+
 # Sentinel value pushed onto the queue to signal that no more events will
 # follow, so the FastAPI endpoint knows when to stop draining.
 _DONE = None
@@ -41,12 +45,17 @@ class AGUIEventBridge:
     FastAPI endpoint drains it asynchronously from the event loop thread.
     """
 
-    def __init__(self, thread_id: str, run_id: str):
+    def __init__(self, thread_id: str, run_id: str, trace: "RunTrace | None" = None):
         self.thread_id = thread_id
         self.run_id = run_id
+        # Sees every event too, so the run's trace (observability.py)
+        # is built from exactly what the client was sent.
+        self.trace = trace
         self._queue: queue.Queue = queue.Queue()
 
     def emit(self, event) -> None:
+        if self.trace is not None:
+            self.trace.on_event(event)
         self._queue.put(event)
 
     def drain(self):

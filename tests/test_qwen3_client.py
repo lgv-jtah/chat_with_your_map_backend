@@ -255,3 +255,78 @@ class TestUsageLogging:
         assert result == "Hallo"
         [record] = [r for r in caplog.records if r.name == "cwym_agent.llm.qwen3_client"]
         assert "no usage reported" in record.message
+
+
+class TestRunTraceRecording:
+    """Inside a traced run (cwym_agent.observability), every LLM call
+    lands in the run's trace - with duration, tokens and finish_reason,
+    and for the planner the raw tool calls before any are dropped."""
+
+    def _traced(self):
+        import contextvars
+
+        from cwym_agent import observability
+
+        context = contextvars.copy_context()
+        trace = context.run(observability.start_run, "thread-x", "run-x")
+        return context, trace
+
+    def test_plan_records_raw_tool_calls_including_malformed_ones(self):
+        body = _sse(
+            _tool_call_delta(0, "call_1", "location_extractor", "{not valid json"),
+            finish_reason="length",
+            usage={"prompt_tokens": 100, "completion_tokens": 6144, "total_tokens": 6244},
+        )
+        client = _client_for(body)
+        context, trace = self._traced()
+
+        result = context.run(client.plan, "irgendeine Anfrage")
+
+        assert result == {"steps": []}
+        [call] = trace.llm_calls
+        assert call["label"] == "plan"
+        assert call["finishReason"] == "length"
+        assert call["usage"] == {"promptTokens": 100, "completionTokens": 6144}
+        assert call["toolCalls"] == [{"name": "location_extractor", "arguments": "{not valid json"}]
+        assert call["durationMs"] >= 0
+
+    def test_generate_records_prompt_and_output(self):
+        body = _sse(
+            {"content": "Hallo"},
+            finish_reason="stop",
+            usage={"prompt_tokens": 10, "completion_tokens": 2, "total_tokens": 12},
+        )
+        client = _client_for(body)
+        context, trace = self._traced()
+
+        context.run(client.generate, "Formuliere eine Antwort.", label="text_response")
+
+        [call] = trace.llm_calls
+        assert call["label"] == "text_response"
+        assert call["prompt"] == "Formuliere eine Antwort."
+        assert call["output"] == "Hallo"
+
+    def test_failed_call_is_recorded_and_reraised(self, caplog):
+        import pytest
+
+        def handler(request: httpx2.Request) -> httpx2.Response:
+            return httpx2.Response(400, json={"error": {"message": "bad request"}})
+
+        client = Qwen3Client(_settings(), http_client=httpx2.Client(transport=httpx2.MockTransport(handler)))
+        context, trace = self._traced()
+
+        with caplog.at_level("WARNING", logger="cwym_agent.llm.qwen3_client"):
+            with pytest.raises(Exception):
+                context.run(client.generate, "Formuliere eine Antwort.", label="text_response")
+
+        [call] = trace.llm_calls
+        assert call["label"] == "text_response"
+        assert "error" in call
+        assert any("failed after" in r.message for r in caplog.records)
+
+    def test_outside_a_traced_run_nothing_is_recorded(self):
+        body = _sse({"content": "Hallo"}, finish_reason="stop")
+        client = _client_for(body)
+
+        # Must simply not fail - there is no trace to record into.
+        assert client.generate("Formuliere eine Antwort.") == "Hallo"

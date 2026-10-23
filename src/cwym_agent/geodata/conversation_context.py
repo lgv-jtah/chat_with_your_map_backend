@@ -5,8 +5,9 @@ request, validated into typed, backend-trusted structures.
 **Why client-held, not a server-side session store** (Section 10.2):
 the frontend holds the live map state authoritatively (including manual
 layer toggles the backend never sees any other way), it removes session
-keying/TTL/growth/restart as problems, and no chat history is retained
-server-side. The cost: everything here is untrusted client input and
+keying/TTL/growth/restart as problems, and no chat history is needed
+server-side to answer a turn (the per-turn debug traces of
+``cwym_agent.observability`` are write-only and never read back). The cost: everything here is untrusted client input and
 must be validated - never trusted geometry, never an un-scoped layer
 id, never more than a bounded window of history.
 

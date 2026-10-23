@@ -12,6 +12,7 @@ Schulen" was planned in total isolation (see ImplementationLog.md).
 """
 
 import asyncio
+import contextvars
 import logging
 import os
 import time
@@ -31,17 +32,15 @@ from cwym_agent.geodata import clarification
 from cwym_agent.geodata.conversation_context import build_context, current_query
 from cwym_agent.geodata.portal_catalog_resolver import PortalCatalogResolver, build_inline_catalog
 from cwym_agent.geodata.settings import GeodataSettings
+from cwym_agent.observability import bind_ids, configure_logging, start_run
 from cwym_agent.pipeline import build_pipeline, run_pipeline
 
-# Configure a basic root handler so `cwym_agent.*` module loggers (used
-# for startup-progress messages - see the lifespan handler below, and
-# ``cwym_agent.geodata.layer_search``) are actually visible. Without
-# this, Python's root logger defaults to WARNING with no handler, so
-# `logger.info(...)` calls are silently dropped even though uvicorn's
-# *own* "INFO:     ..." lines (from its separately-configured loggers)
-# still show up - misleadingly making the app look silent/stuck during
-# the several-minutes-long startup warm-up.
-logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
+# Configure the root handler so `cwym_agent.*` module loggers are
+# actually visible (Python's root logger otherwise defaults to WARNING
+# with no handler, silently dropping the startup warm-up progress), with
+# every line tagged with its request's threadId/runId, plus the
+# per-turn trace logger - see ``cwym_agent.observability``.
+configure_logging()
 
 logger = logging.getLogger(__name__)
 
@@ -174,17 +173,24 @@ async def query_endpoint(
     pipeline: Pipeline = Depends(get_pipeline),
     portal_catalog_resolver: PortalCatalogResolver = Depends(get_portal_catalog_resolver),
 ):
+    # Every log line of this request - including the ones from the
+    # pipeline's worker thread, which runs in a copy of this context -
+    # carries the ids.
+    bind_ids(inp.thread_id, inp.run_id)
+
     try:
         query = current_query(inp)
         raw_portal_context = (inp.forwarded_props or {}).get("portal_context")
         portal_context = PortalContext.model_validate(raw_portal_context) if raw_portal_context else None
     except (ValidationError, ValueError) as exc:
+        logger.warning("Rejected request (400): %s", exc)
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
     catalog = None
     if portal_context is not None and portal_context.layers is not None:
         max_layers = GeodataSettings().portal_context_max_layers
         if len(portal_context.layers) > max_layers:
+            logger.warning("Rejected request (400): %d inline layers, max is %d", len(portal_context.layers), max_layers)
             raise HTTPException(
                 status_code=400,
                 detail=f"portal_context.layers has {len(portal_context.layers)} entries, max is {max_layers}",
@@ -199,21 +205,45 @@ async def query_endpoint(
     try:
         context = build_context(inp, catalog)
     except ValidationError as exc:
+        logger.warning("Rejected request (400): invalid state - %s", exc)
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
     # "Hoheluft-West" as the answer to "meinst du Hoheluft-Ost oder
     # Hoheluft-West?" becomes the complete original question again.
+    original_query = query
     resolved_query = clarification.resolve_reply(query, context.history)
     if resolved_query != query:
         logger.info("Clarification reply %r resolved to %r", query, resolved_query)
         query = resolved_query
 
+    if portal_context is None:
+        portal_context_mode = None
+    else:
+        portal_context_mode = "inline" if portal_context.layers is not None else "urls"
+
     bridge = AGUIEventBridge(thread_id=inp.thread_id, run_id=inp.run_id)
     encoder = EventEncoder()
 
     def run_pipeline_sync():
+        trace = start_run(inp.thread_id, inp.run_id)
+        bridge.trace = trace
+        status, error = "ok", None
         bridge.run_started()
         try:
+            trace.set_request(
+                query=original_query,
+                resolvedQuery=query if query != original_query else None,
+                history=[{"role": role, "text": text} for role, text in context.history],
+                mapState=context.map_state.model_dump(by_alias=True, mode="json"),
+                stateIn=inp.state,
+                portalContext=portal_context_mode,
+                catalogLayers=len(allowed_layer_ids) if allowed_layer_ids is not None else None,
+            )
+            if trace.content == "full":
+                logger.info("Run started: %r (history: %d messages)", query, len(context.history))
+            else:
+                logger.info("Run started (history: %d messages)", len(context.history))
+
             run_pipeline(
                 pipeline,
                 query,
@@ -224,13 +254,20 @@ async def query_endpoint(
             )
             bridge.run_finished()
         except Exception as exc:  # noqa: BLE001 - surfaced to the client as RUN_ERROR
+            status, error = "error", exc
+            logger.exception("Pipeline failed")
             bridge.run_error(str(exc))
         finally:
+            trace.finish(status, error)
             bridge.done()
 
     async def event_stream():
         loop = asyncio.get_event_loop()
-        task = loop.run_in_executor(None, run_pipeline_sync)
+        # run_in_executor doesn't carry context variables into the worker
+        # thread by itself - run it inside a copy of this request's
+        # context, so the ids and the trace stay per request.
+        run_context = contextvars.copy_context()
+        task = loop.run_in_executor(None, run_context.run, run_pipeline_sync)
 
         while True:
             event = await loop.run_in_executor(None, bridge.drain)

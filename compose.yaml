@@ -19,6 +19,20 @@ services:
       - CWYM_QWEN3_BASE_URL
       - CWYM_QWEN3_API_KEY
       - CWYM_QWEN3_TIMEOUT
+      # Logging/trace settings with their defaults written out: a bare
+      # `- NAME` entry would hide a value set in .env (env_file) whenever
+      # the invoking shell doesn't set it. `${NAME:-default}` reads both
+      # the shell and .env.
+      - CWYM_LOG_LEVEL=${CWYM_LOG_LEVEL:-INFO}
+      - CWYM_LOG_FORMAT=${CWYM_LOG_FORMAT:-text}
+      - CWYM_TRACE_CONTENT=${CWYM_TRACE_CONTENT:-full}
+      # One JSON line per chat turn (see README "Logging & traces"), on
+      # the `traces` volume so it survives `make docker-up` recreating
+      # the container - unlike `docker compose logs`. Set it to an empty
+      # value in .env to switch the file off.
+      - CWYM_TRACE_FILE=${CWYM_TRACE_FILE-/var/log/cwym/traces.jsonl}
+      - CWYM_TRACE_FILE_MAX_MB=${CWYM_TRACE_FILE_MAX_MB:-50}
+      - CWYM_TRACE_FILE_BACKUPS=${CWYM_TRACE_FILE_BACKUPS:-10}
       # ~/.docker/config.json injects the corporate proxy into containers
       # with a noProxy that lacks the internal vLLM host, so requests to it
       # would go via the proxy (503). Bypass it like the host shell does.
@@ -27,6 +41,15 @@ services:
     volumes:
       # Persist downloaded embedding/reranker models across restarts.
       - hf-cache:/home/app/.cache/huggingface
+      # Run traces (CWYM_TRACE_FILE) - `make traces-export` copies them out.
+      - traces:/var/log/cwym
+    # The container's stdout log is capped, not kept forever - the
+    # durable record of each turn is the trace file above.
+    logging:
+      driver: json-file
+      options:
+        max-size: "20m"
+        max-file: "5"
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8082/health', timeout=5)"]
       interval: 30s
@@ -38,3 +61,4 @@ services:
 
 volumes:
   hf-cache:
+  traces:

@@ -985,11 +985,11 @@ What's superseded by the MapCommand protocol, and why:
 - **No frontend-side batching or reordering of `MapCommand`s.** Ordering constraints are expressed server-side as command-rule dependencies or as the order within one rule's output (Section 3).
 - **Vue-side AG-UI client:** official CopilotKit support is React-first, so client-side event handling is custom (fetch + ReadableStream).
 - **Conversation context is client-held, not server-side session memory (Section 10).**
-  - Each request is a `RunAgentInput` carrying the live map state, the last 3 chat turns, and a stable `threadId` (used for log correlation only). The backend stores nothing between turns.
+  - Each request is a `RunAgentInput` carrying the live map state, the last 3 chat turns, and a stable `threadId` (used for log/trace correlation only). The backend keeps no state between turns; it only writes a write-only run trace per turn (Section 10.10).
   - Chosen over a server-side session store because:
     - the frontend holds the map state authoritatively, including manual layer toggles;
     - it removes session keying, TTL, growth and restart behaviour as problems;
-    - no chat history is retained server-side (DSGVO).
+    - no chat history is needed server-side to answer a turn (DSGVO). The run traces of Section 10.10 do contain it (unless `CWYM_TRACE_CONTENT=metadata`), but are never read back to answer a request.
 - **`isSecured` layers are invisible to the backend's catalog fetch** (Section 8), since that fetch is unauthenticated. Not a reported problem yet; noted so it isn't rediscovered as a mystery gap later.
 - **Watch item:** a new Masterportal-core search component may be in development that could return layer IDs directly. Not confirmed or scoped. If it ships, it may reduce or replace `LayerSearchService`'s custom vector index, or become another candidate input. Not acted on yet.
 - **Sub-agent selection is one-shot, not adaptive.** `MasterAgentComponent` decides the full set of tool calls in a single planning turn. A later step (`filter_agent`) can't influence the plan after seeing an earlier step's result; it can only rely on earlier waves having run first (Section 4).
@@ -1179,7 +1179,7 @@ FilterAgent's result shape: `{layerId, label, features, filterSpec: {conditions,
 
 Follow-up queries are resolved from **context the client sends with every request**, not from server-side session memory. The request is a standard AG-UI `RunAgentInput`:
 
-- **`threadId`**: stable for one chat session in the widget. Used for log/trace correlation only; the backend keeps nothing under it.
+- **`threadId`**: stable for one chat session in the widget. Used for log/trace correlation only (Section 10.10); no state is kept under it.
 - **`runId`**: fresh per request.
 - **`messages`**: the last 3 user/assistant turns, text only, followed by the current user query as the **last** message.
 - **`state`**: the current map state as the frontend sees it (10.3).
@@ -1194,7 +1194,7 @@ Before this, the endpoint minted a fresh `threadId`/`runId` per request and forw
 | Accuracy of map state | Only knows what the agent did; misses manual layer toggles, goes stale | Reads the live map, so it's always current |
 | Keying | Needs a session id the frontend reuses, plus a store | `threadId` is for logging only; nothing stored |
 | Lifecycle | TTL, growth per session, lost/inconsistent after restart | None; bounded by the message cap |
-| DSGVO | Chat history retained server-side | Nothing retained between requests |
+| DSGVO | Chat history retained server-side | Nothing needed between requests (debug traces are separate and switchable, 10.10) |
 | Cost | Store + eviction logic | A few hundred tokens of planner input |
 
 What the client-held approach costs:
@@ -1423,9 +1423,24 @@ export function buildRunInput({ threadId, query, chatMessages, agentState, porta
 
 ### 10.9 Deliberately not done (v1)
 
-- **No server-side store**, not even a short-TTL cache keyed by `threadId`.
+- **No server-side store**, not even a short-TTL cache keyed by `threadId`. The run traces (10.10) are a write-only debug log, not a store: nothing reads them to answer a request.
 - **No summarisation of long histories.** A fixed window of 3 turns plus the structured map state covers the observed failure.
 - **No filter removal by conversation** (Section 7, open item).
+
+### 10.10 Logging and run traces (CWYM-1)
+
+Debugging a follow-up that went wrong needs exactly what this section's design keeps off the server: the history and map state of that turn, plus what the planner made of them. So every turn writes one **run trace** - a single JSON line (`"type": "run_trace"`) on the `cwym_agent.trace` logger (`src/cwym_agent/observability.py`):
+
+- **Request:** query (and its clarification rewrite), history, the validated map state and the raw incoming `state`, portal-context mode, catalog size.
+- **Planning:** the full planner prompt (context block + rules), the reasoning text, and the raw tool calls before `as_steps()` drops unknown names or malformed arguments.
+- **Execution:** every sub-agent call with its arguments, result (geometry and features summarized) and duration; every LLM call with label, duration, tokens, `max_tokens`, `finish_reason` and, for `generate`, prompt and output; notes such as the implicit filter.
+- **Outcome:** the MapCommands, the answer, `status` `ok`/`error` with traceback, total duration, and a `summary` block.
+
+The trace is assembled by observing the AG-UI events (`AGUIEventBridge.emit` forwards every event to the run's `RunTrace`), so it shows exactly what the client was sent; only the planner prompt, the LLM call stats and the request itself are added directly. `threadId`/`runId` live in context variables (the pipeline runs inside a copied context in the executor thread) and are stamped on every log record.
+
+Traces go to stdout and, with `CWYM_TRACE_FILE` (on by default in Docker, `traces` volume), to a rotating JSONL file. `python -m cwym_agent.traces` reads them back (`show <id>`, `queries`). The frontend shows a short "Vorgangs-ID" (the `runId`) under each answer's steps so a tester can point at the exact turn.
+
+**Content vs. DSGVO:** `CWYM_TRACE_CONTENT=full` (default) stores user text for as long as the files are kept - intended for user tests and building a set of real queries. `metadata` replaces all user-written text with its length and keeps only ids, names, timings, tokens and errors. Traces are never read back by the agent, so they don't change the "nothing retained between requests" property of 10.2 for answering requests.
 
 ---
 

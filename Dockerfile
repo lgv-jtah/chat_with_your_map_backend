@@ -39,6 +39,9 @@ ENV HF_HOME=/home/app/.cache/huggingface \
     PYTHONUNBUFFERED=1
 RUN mkdir -p "$HF_HOME" && chown -R app:app /home/app/.cache
 
+# Same for the run-trace volume (CWYM_TRACE_FILE, see compose.yaml).
+RUN mkdir -p /var/log/cwym && chown app:app /var/log/cwym
+
 COPY --from=builder --chown=app:app /app/.venv /app/.venv
 
 USER app

@@ -130,6 +130,12 @@ Qwen3Settings` and `cwym_agent.geodata.settings.GeodataSettings`):
 | `CWYM_FILTER_QUERYABLES_CACHE_TTL` | `3600` | Seconds `FilterAgent` trusts a fetched OGC API Features `/queryables` schema before re-fetching |
 | `CWYM_FILTER_RESULT_LIMIT` | `500` | Max features fetched per `FilterAgent` query |
 | `CWYM_FILTER_LLM_MAX_TOKENS` | `4096` | Token budget for `FilterAgent`'s condition-extraction LLM call (OAF and WFS) |
+| `CWYM_LOG_LEVEL` | `INFO` | Root log level |
+| `CWYM_LOG_FORMAT` | `text` | `text` (human-readable, `[thread/run]` prefix) or `json` (one object per line, for log shippers) |
+| `CWYM_TRACE_CONTENT` | `full` | What the run traces contain: `full` (query, history, prompts, reasoning, answer) or `metadata` (user-written text replaced by its length) - see "Logging & traces" |
+| `CWYM_TRACE_FILE` | *(empty; Docker: `/var/log/cwym/traces.jsonl`)* | Also write the run traces to this rotating JSONL file |
+| `CWYM_TRACE_FILE_MAX_MB` | `50` | Size at which the trace file rotates |
+| `CWYM_TRACE_FILE_BACKUPS` | `10` | Rotated trace files kept (`traces.jsonl.1` ... `.10`) |
 
 ## Setup
 
@@ -174,6 +180,9 @@ make docker-up-offvpn   # same, but Qwen3 on IONOS (needs the local LiteLLM cont
 make docker-logs        # follow logs - startup warm-up takes a few minutes
 make docker-down        # stop + remove
 make docker-build       # build the image only
+make trace ID=<id>      # show a conversation from the run traces (see "Logging & traces")
+make traces-queries     # all traced queries as CSV
+make traces-export      # copy the trace files out of the container
 ```
 
 The service listens on `http://localhost:8082` (`GET /health` for a
@@ -217,6 +226,66 @@ Recommended `.env` on the server:
 CWYM_PORTAL_CATALOG_ALLOW_LOOPBACK=false            # loopback is the server itself there
 CWYM_CORS_ALLOW_ORIGINS=https://localhost:9001      # portal origin(s), comma-separated
 ```
+
+## Logging & traces
+
+Two kinds of output, both on stdout (`make docker-logs`):
+
+- **Log lines** - every line of a request carries a short
+  `[thread/run]` prefix (the first 8 characters of the AG-UI
+  `threadId`/`runId`), so one conversation can be followed through
+  concurrent requests. Per turn you see the plan with its arguments,
+  each sub-agent with its duration, every LLM call with tokens,
+  `finish_reason` and duration (a `TRUNCATED` warning when it ran out of
+  tokens), the map commands built ("no map commands built" is the case
+  behind the "konnte ich nicht auf der Karte umsetzen" reply), the
+  answer, and - on a failure - the full traceback.
+- **Run traces** - one JSON line per chat turn (`"type": "run_trace"`)
+  with everything needed to debug it afterwards: the query (and what a
+  place-question reply was rewritten to), the history and map state the
+  frontend sent, the planner's full prompt and reasoning, the planner's
+  raw tool calls (before invalid ones are dropped), every sub-agent call
+  with arguments, result and duration, every LLM call (prompt, output,
+  tokens, `finish_reason`, duration), the map commands (geometry and
+  features summarized), the answer, notes like "implicit filter added",
+  and `status` `ok`/`error` with the traceback. A `summary` block gives
+  the one-glance view (steps, command types, the planner's
+  `finish_reason`, total LLM time).
+
+In Docker the traces also go to `/var/log/cwym/traces.jsonl` on the
+`traces` volume (rotating, `CWYM_TRACE_FILE_*`), so they survive
+`make docker-up`/`docker-down` - the container's own stdout log does
+not, and is capped at 5 x 20 MB.
+
+**Finding a conversation.** The chat shows a "Vorgangs-ID" under every
+answer's steps (expand "▸ n Schritte"); the copy button copies
+`threadId/runId`. Any prefix of either id works:
+
+```bash
+make trace ID=3f2a9c1e          # the whole conversation, readable
+make traces-queries             # queries-<date>.csv: every turn's query, outcome, answer
+make traces-export              # copy all trace files into traces-<date>/
+
+# without make / on an export / on saved `docker compose logs` output:
+uv run python -m cwym_agent.traces --file traces.jsonl show 3f2a9c1e
+uv run python -m cwym_agent.traces --file traces.jsonl show 3f2a9c1e --json   # raw records
+jq 'select(.summary.commands == [])' traces.jsonl                             # all turns with no map change
+```
+
+Locally (`make run`) traces go to stdout only, unless `CWYM_TRACE_FILE`
+is set.
+
+**Data protection.** With the default `CWYM_TRACE_CONTENT=full` the
+server stores what users type (queries, chat history, answers) for as
+long as the trace files are kept - intended for user tests, where
+collecting real queries is the point. Tell test users, and delete the
+`traces` volume (`docker volume rm cwym-agent_traces`) when the test
+data is no longer needed. Where content must not be stored, set
+`CWYM_TRACE_CONTENT=metadata`: traces then keep ids, step/command
+names, timings, tokens and errors, but replace user-written text with
+its length and drop coordinates. Ordinary INFO log lines can still contain fragments of a
+query (e.g. a sub-agent's argument); use `CWYM_LOG_LEVEL=WARNING` as
+well if that matters.
 
 ## Try it
 
