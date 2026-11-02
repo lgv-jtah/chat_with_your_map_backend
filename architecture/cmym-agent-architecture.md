@@ -1856,3 +1856,15 @@ New MapCommands, in `map_commands.py` and `docs/frontend-api.md`:
 - **Masterportal upgrade.** The ASCEND portal config has to be checked against 3.27.
 - **Munich's LLM provider.** Must support OpenAI-compatible tool calling; token budgets and prompts may need tuning per model, which the profile/environment split has to allow.
 - **Ticket breakdown.** The phases still need Jira tickets.
+
+**Questions for Munich (meeting 3 Nov 2026).** The Munich formats are not known yet; we asked Munich for dummy data. Real response samples (5–10 hits each, saved as JSON) are worth more than invented data: the field mapping is what has to be right, and the samples become the mock HTTP data for the Munich profile tests.
+
+| Topic | Questions |
+|---|---|
+| Address search (`p1_adressen_4326`) | 2–3 sample responses: a full address, a street, a district name (e.g. "Harthof", "Milbertshofen-Am Hart"). Which `_search/template` id and parameters, or is a plain `_search` with a query body allowed? Which fields give the place type (address, street, Stadtbezirk, Bezirksteil), the coordinates and their CRS? Can a backend server call it (public, CORS/IP restrictions, rate limits)? |
+| Layer index (`portal.ascend_harthof`) | A sample response for "Energie" or "Gebäude". Which fields hold id, name, description, keywords? Do the ids match `services-internet.json`? Is there a city-wide index or only one per portal? |
+| Boundaries | A WFS/OAF service for Stadtbezirke (and Bezirksteile), with its name fields? A dump of `ascend_umgriff_projektgebiet`? |
+| Building data | Can `gsm:ascend_gebaeude_gfi` be published via WFS/OAF? If not, a GeoJSON export with the attribute list? Who owns the attribute values and how often do they change (is a manually refreshed file acceptable)? |
+| LLM and operations | Which provider and model; does it support OpenAI-compatible tool calling? May user questions be stored in traces (`CWYM_TRACE_CONTENT=full` vs `metadata`)? Can the ASCEND portal run Masterportal 3.27? |
+
+**Not blocked by Munich.** Phase 1 steps 1–4, 7 and 8 (14.6) can start without the Munich formats; only step 5 waits for the samples.
