@@ -1670,6 +1670,8 @@ UDP-side pieces: `dc_custom_component.visualizers.MapLayerPublisher` (reprojects
 
 Overlaps such as "Fahrradstationen in Wandsbek" stay with CWYM's `FilterAgent`: same result on the map, in seconds.
 
+**Superseded by ADR-002 (14.2, 14.4).** Simple aggregates over one dataset ("Wie viele … in Altona?", distribution, top-N, min/max/average/sum) move to CWYM's built-in tier 1. The UDP agent becomes the Hamburg adapter of the optional tier 2 analysis agent and keeps everything spatial or multi-step ("Was ist am nächsten an …?", "Wo ist die Dichte am höchsten?", joins, several datasets). The table in 14.4 replaces the one above.
+
 ### 13.6 First slice (implemented 30 Sep 2026)
 
 End-to-end for one question shape: a count within an area, e.g. "Wie viele StadtRAD-Stationen gibt es im Bezirk Altona?" → the count as the reply, the Altona boundary and the matching stations on the map, zoomed to fit. Includes clarification round trips through the chat history.
@@ -1689,3 +1691,252 @@ Verified live on 30 Sep 2026 against the self-hosted stack (details in `Implemen
 - **Removing analysis layers by conversation** (the "zeig wieder alle" of results).
 - **History truncation.** CWYM keeps at most 500 characters per history message (Section 10.4); a long UDP clarifying question can lose its list of options before it goes back to UDP.
 - **Large results by reference** (13.2, deferred alternative).
+
+## 14. Multi-city CWYM and the ASCEND (Munich) integration
+
+The ASCEND Assistant (`../munich/ascend-assistant`) is a chat assistant for the Masterportal of the ASCEND project area Quartier Harthof (Landeshauptstadt München / TU München). It answers questions about 235 buildings (energy class, owner, renovation, district heating, PV) and has features CWYM lacks: statistics charts, a guided tour, German/English answers, building selection by map click, suggestion buttons and mutually exclusive thematic layers. This section records what we found when comparing the two systems (2 Nov 2026) and the plan for integrating ASCEND into CWYM.
+
+### 14.1 What we found (2 Nov 2026)
+
+| | CWYM (Hamburg) | ASCEND (Munich, Harthof) |
+|---|---|---|
+| Backend | Haystack pipeline: planner → sub-agents → command builder → reply (Section 4) | LangChain `AgentExecutor`, 9 tools, max. 8 iterations |
+| LLM | Qwen3 on vLLM via the OpenAI SDK; IONOS works already (`make run-offvpn`) | Qwen on Ollama (`ChatOllama`) |
+| Protocol | AG-UI events, typed MapCommands (Section 5) | Own SSE format: `tool_start`, `tool_calls`, `token`, `done{text, suggestions, charts, narrative}`, `error` |
+| Map actions | `ACTIVATE/DEACTIVATE_LAYER`, `NAVIGATE_TO_LOCATION`, `ZOOM_TO_EXTENT`, `DRAW_BOUNDARY`, `APPLY/CLEAR_FILTER`, `ADD/CLEAR_RESULT_LAYER(S)`, `OPEN_TOOL`, ... | `toggle_layer`, `zoom_to_extent`, `highlight_features`, `clear_highlights` (`set_map_center` in the frontend is never sent) |
+| Layers | ~6,500-layer central index (hybrid search + LLM disambiguation), scoped by `portal_context` (Section 8) | 16 layers in a static registry with keyword matching (`geo/layers.py`) |
+| Places | Hamburg address search, district boundaries from OAF | None; a fixed project-area bbox |
+| Data | Live OAF/WFS filtering (`FilterAgent`, Section 9), analysis via the UDP agent (Section 13) | 235 buildings in a local JSON cache, scraped by a 25 m grid of WMS GetFeatureInfo requests on `gsm:ascend_gebaeude_gfi` (no WFS for it; the scrape script is not in the repo) |
+| Analytics | Feature counts only; aggregates go to the UDP agent | Value distributions as bar charts, top-N, lookup by address, point-in-polygon |
+| Language | German only (`portal_context.languages` is accepted but unused) | German/English, detected per message by a stop-word heuristic |
+| Frontend | `chatWithYourMap` addon, Masterportal 3.27.1 | `chatAI` addon, Masterportal 3.20.x |
+| Tests / ops | Offline + opt-in live tests, run traces (Section 10.10) | No tests, no CI |
+
+**What is Hamburg-specific in CWYM today:**
+
+- The endpoints in `geodata/settings.py` (layer catalog, address search, area boundaries, UDP agent).
+- The address search's response format and its place types (`county`→bezirk, `district`→stadtteil) in `address_resolver.py`.
+- The Elasticsearch document format of the layer catalog (`layer_search.py`).
+- The boundary collections and name fields (`area_boundaries.py`).
+- The default location and the query "hamburg" (`real_data_services.py`).
+- `HAMBURG_EXTENT` (`types.py`), also used to clip UDP bboxes (`udp_analysis.py`).
+- "Hamburg" in prompts and tool descriptions (`qwen3_client.py`, `sub_agents.py`, `real_data_services.py`).
+- Place types as a fixed `bezirk | stadtteil | address` list (`map_commands.py`, `conversation_context.py`).
+
+Data services are duck-typed (no `Protocol`), settings come from the environment only, and `build_pipeline(llm, data_services)` is the single injection point. There is no notion of a city, tenant or profile.
+
+**The LLM side is almost provider-agnostic already.** `Qwen3Client` uses the OpenAI SDK. What ties it to Qwen3 on vLLM is that it expects the reasoning trace in the separate `reasoning` field, plus the model name, parameters and prompts.
+
+**Munich has services shaped like Hamburg's.** The ASCEND portal's `rest-services-internet.json` points at an address search (`https://geoportal.muenchen.de/search/p1_adressen_4326/_search/template`) and a layer index per portal (`https://geoportal.muenchen.de/search/portal.ascend_harthof/_search/template`), both Elasticsearch. Their response formats have not been checked yet.
+
+**Known ASCEND bugs (to fix when porting, not to carry over):**
+
+- Chart colours: the pattern "saniert" matches "Nicht saniert", and "angeschlossen" matches "nicht angeschlossen", so both come out green (`tools.py`, `_get_attribute_colors`).
+- Two-way substring matching gives false layer hits ("age" in "usage", "use", "bin", "area"); the keyword fallback `_force_tool_calls_from_intent` runs it on the whole message, and any unanswered message mentioning "Harthof" zooms.
+- Map click → building converts pixels to coordinates linearly in the backend, which is wrong when the map is rotated (rotation is enabled).
+- The GML parser keeps only the outer ring, so holes are lost.
+- `get_building_info` takes the first substring match ("…Straße 5" can return no. 57).
+- `muelleimer` and `veranstaltung` are in the registry but not in the portal.
+- Client-supplied `history` (unvalidated roles) and `selected_buildings` go into the prompt verbatim (prompt injection); no length limits, no auth, raw exception texts sent to clients.
+
+### 14.2 ADR-002: CWYM becomes one product for several cities; ASCEND's features move into it
+
+**Status:** accepted, 2 Nov 2026. Not implemented yet.
+
+**Context.** Munich wants what ASCEND does; Hamburg would benefit from ASCEND's features too. Maintaining two assistants with two LLM stacks, two protocols and two addons doubles the work, and ASCEND has no tests. CWYM has the sturdier base (typed protocol, tests, traces, live OAF/WFS filtering), ASCEND has the features and the Munich data knowledge.
+
+**Decision.**
+
+1. **One codebase, one deployment per city.** A city profile is chosen at startup (`CWYM_CITY_PROFILE=hamburg|munich`), not per request. Each city keeps its data, its LLM provider and its operations separate; the pipeline stays a single global instance per process.
+2. **LLM provider agnostic.** Any OpenAI-compatible endpoint: self-hosted vLLM, IONOS, or whatever provider Munich uses. A reasoning trace is optional.
+3. **Analysis in two tiers (14.4).**
+   - **Tier 1, built in, every city:** simple, deterministic operations on one dataset (count, distribution, top-N, min/max/average/sum, lookup, point lookup), done by an extended `FilterAgent` on the city's own LLM, in seconds, without an external service. This covers everything ASCEND does.
+   - **Tier 2, optional per city:** an external analysis agent for anything spatial or multi-step, behind a generic `AnalysisAgent` interface. Hamburg: the UDP agent (Section 13). Munich: none for now.
+   - The planner only sees the tools the profile offers. Questions tier 1 can answer go to tier 1 in every city. In a city without tier 2, tier 2 questions get an honest "not available here" reply.
+4. **New MapCommand types** for charts, suggestions and tours, rather than AG-UI `CUSTOM` events. One contract, one executor in the frontend, the same validation and trace path.
+5. **Guided tours are static configuration per city** (steps, layers, de/en narration), played without the LLM. Figures in the narration are placeholders filled from tier 1 when the tour starts, so they don't go stale.
+6. **One frontend:** the `chatWithYourMap` addon is extended; the Munich portal moves to Masterportal 3.27. The `chatAI` addon is retired.
+7. **ASCEND is retired** once CWYM covers its scenarios (14.6).
+
+**Alternatives considered.**
+
+- *ASCEND as an external domain agent, like UDP (Section 13).* Fastest, but keeps two LLM stacks and two prompt sets, and Munich would still need its own places and layer catalog for anything outside Harthof. Rejected as the target; it stays an option for an interim demo.
+- *One shared multi-tenant backend, city chosen per request.* More flexible, but mixes the cities' data, LLM providers and traces in one process and makes every component profile-aware at request time. Rejected for now; a profile per deployment keeps the door open, since the profile object is the same either way.
+- *A Munich-specific plugin for the buildings.* Less design work, but the logic (distribution, top-N, lookup by attribute) is not Munich-specific. Rejected.
+- *A separate `dataset_agent` sub-agent* (the first draft of this ADR). Rejected: it would rebuild what the UDP agent (`aggregate_geodataframe`, `fetch_local_dataset`, `publish_map_layer`) and `FilterAgent` (attribute and area filters) already do, and make routing between them ambiguous.
+- *The UDP agent as the only analysis engine, also for Munich.* Rejected: Munich has no UDP agent; UDP runs on Claude Sonnet (Munich needs its own provider, and the large Sonnet-tuned pipeline is unproven on other models), takes minutes where ASCEND takes seconds, and is Hamburg-specific (address resolver, layer searcher, UDP catalog). Making UDP multi-city is a separate project; tier 2 leaves room for it.
+- *AG-UI `CUSTOM` / `STATE_DELTA` events for charts, suggestions and tours.* Keeps MapCommands map-only, but adds a second payload path in the frontend and the traces. Rejected.
+- *LLM-generated tour narration.* Flexible, but slow, not reproducible, and numbers can drift. Rejected in favour of static texts with placeholders filled from tier 1.
+
+**Consequences.**
+
+- The Hamburg-specific code (14.1) must be moved behind interfaces without changing Hamburg's behaviour; the existing tests are the guard.
+- Prompts exist in German and English and need maintaining in both.
+- The Munich portal needs an upgrade from Masterportal 3.20 to 3.27.
+- The new MapCommands extend the contract in `docs/frontend-api.md`; old addon versions ignore unknown types (they log a warning).
+- Hamburg's behaviour changes: simple counts such as "Wie viele Schulen in Altona?" move from UDP to tier 1. Faster, but the numbers can differ where UDP used a different dataset; golden tests have to cover these questions.
+- Hamburg and Munich behave differently for tier 2 questions (an answer vs. "not available here"). This is intended and has its own tests.
+
+### 14.3 City profile
+
+A `CityProfile` is loaded from `profiles/<city>/profile.yaml` at startup and passed into `build_pipeline`. It holds:
+
+| Part | Hamburg | Munich |
+|---|---|---|
+| Name and prompt wording | "Hamburg" | "München" |
+| Languages | `de` | `de`, `en` |
+| Default location, city extent | today's hard-coded values, `HAMBURG_EXTENT` | to be defined |
+| Geocoder: endpoint, adapter, field mapping, place types | `api.hamburg.de/addr_search`; bezirk/stadtteil | `geoportal.muenchen.de/search/p1_adressen_4326` (to check); Stadtbezirk/Bezirksteil |
+| Layer catalog: endpoint, adapter, document mapping | `geodienste.hamburg.de/layers/_search` | `geoportal.muenchen.de/search/portal.<portal>` (to check) |
+| Boundaries: source, collections, name fields | `verwaltungsgrenzen` (bezirke, stadtteile) | source still open |
+| Tier 1 datasets with attribute schema (14.4) | none at first | ASCEND buildings |
+| Exclusive layer groups | none | the 8 `gsm:ascend_baugruppen_*` layers |
+| Tours | none | `tours/harthof.yaml` |
+| Tier 2 analysis agent (14.4) | `udp` | none |
+
+Secrets and endpoints that differ per environment (LLM URL and key, CORS origins) stay in environment variables.
+
+Data sources sit behind `Protocol`s: `Geocoder`, `LayerCatalogSource`, `BoundarySource`, `DatasetSource` (tier 1), `AnalysisAgent` (tier 2), and `DataServices` for the whole. Today's Hamburg classes become one implementation each. Where Munich's Elasticsearch services have the same shape as Hamburg's, the same adapter is reused with a different field mapping. Place kinds come from the profile instead of the fixed `bezirk | stadtteil | address` list.
+
+**LLM client.** `Qwen3Client` becomes `ChatLLMClient`:
+
+- The `reasoning` field is optional; if it is missing, a `<think>…</think>` block at the start of the content is split off; otherwise there is no reasoning trace.
+- Settings are renamed to `CWYM_LLM_*` (base URL, model, key, timeout, token budgets, temperature); the `CWYM_QWEN3_*` names stay as aliases.
+- Tool calling is required of the model, as today.
+
+**Language.**
+
+- The prompts exist in German and English.
+- The answer language is detected from the user's message (ASCEND's heuristic, ported with tests), falling back to the portal language and then to the profile's first language.
+- A language directive at the end of the reply prompt pins the answer language (as in ASCEND).
+- The addon's UI strings move to `$t()` with de/en locale files.
+
+### 14.4 Analysis in two tiers
+
+Munich has no UDP agent, but CWYM has to work fully in both cities. So analysis is split into a built-in tier every city has, and an optional external tier a city can add. The profile decides which tiers exist, not the code.
+
+#### Tier 1: built in, every city
+
+**The rule:** *one dataset → optional filters (attributes and/or within an area) → one fixed operation on one attribute.*
+
+"Within an area" is a filter, as in `FilterAgent` today. Distance, buffer, nearest, joins, cross tables and anything over several datasets are tier 2.
+
+| Operation | Example | Result |
+|---|---|---|
+| count | "Wie viele Gebäude gehören Münchner Wohnen?" | the number; `HIGHLIGHT_FEATURES` |
+| distribution | "Wie verteilen sich die Energieklassen bei den Gebäuden von Münchner Wohnen?" | `SHOW_CHART`; the matching display layer is switched on |
+| top-N | "Die 5 ältesten Gebäude im Harthof" | `HIGHLIGHT_FEATURES` + `ZOOM_TO_EXTENT` |
+| min / max / average / sum (numbers only) | "Durchschnittliches Baujahr der sanierten Gebäude" | the number |
+| lookup | "Hugo-Wolf-Straße 57" | `HIGHLIGHT_FEATURES` + `ZOOM_TO_EXTENT` |
+| point lookup | map click in selection mode | the feature, for `state.selectedFeatures` |
+
+The list is closed. A new operation is an architecture decision, not a prompt tweak; otherwise tier 1 slowly grows into a second UDP.
+
+This covers every ASCEND analysis tool: `get_building_info` → lookup, `query_buildings` → filter + highlight, `get_building_statistics` → distribution, `find_top_buildings` → top-N, map click → point lookup. Layer switching, zoom, tour and clearing are not analysis.
+
+**Implementation.** No new sub-agent: `FilterAgent` gets the operations as result modes on top of its existing condition extraction (the LLM picks dataset, filters, operation and attribute; the computation is deterministic code, no LLM).
+
+- Data sources: `wfs` and `oaf` (the existing `FilterAgent` clients) and `file` (a GeoJSON file loaded at startup).
+- Address matching prefers exact and house-number-aware matches over substrings; polygons keep their inner rings (14.1).
+- The ASCEND buildings have no WFS. Until Munich provides one, they are a `file` source, with a refresh script in the repo that documents how the file is generated (the ASCEND scrape script is missing).
+
+**Dataset declaration in the profile.** Each tier 1 dataset declares:
+
+- its source and id field;
+- per attribute: de/en label and a **type**: `number`, `category`, or `ordinal` with an explicit value order (energy classes `A+, A, B, …, H`);
+- optional **binning** for charts (e.g. year of construction by decade) or "top 10 + Sonstige";
+- value colours for charts;
+- the **display layer** per attribute, e.g. dataset `buildings`, attribute `energieeffizienzklasse`, layer `gsm:ascend_baugruppen_energieeffizienzklasse`, so a distribution question also switches on the right colouring.
+
+**Rules that keep tier 1 answers correct.**
+
+1. **No aggregates over truncated data.** `FilterAgent` stops at `CWYM_FILTER_RESULT_LIMIT` (500) features. Counts use the server's totals (WFS `resultType=hits`, OAF `numberMatched`); distribution, top-N and numeric aggregates page through all features. Where that isn't possible, tier 1 refuses or says clearly that the result is incomplete, never a silently wrong number. Irrelevant for 235 buildings, essential for Hamburg datasets.
+2. **Typed values.** ASCEND stores every value as a string (`baujahr: "1962"`). Values are converted using the declared type before sorting or computing; ordinals sort by their declared order, not alphabetically.
+3. **Missing values are counted, not hidden.** 36 of 235 buildings have no energy class: the distribution shows a "keine Angabe" bar, top-N and numeric aggregates skip missing values, and the reply says how many were left out.
+4. **Numbers reach the reply unchanged.** Tier 1 results go into the reply fixed (template or verbatim insertion); the reply LLM must not turn "105 von 235" into "rund 100". Same principle as passing UDP answers through verbatim (13.2).
+5. **Tour figures come from tier 1.** Tour texts use placeholders such as `{count(energieeffizienzklasse=H)}`, filled when the tour starts, instead of ASCEND's hard-coded figures.
+
+#### Tier 2: optional analysis agent per city
+
+- For everything spatial or multi-step: nearest, distance, buffer, density, clusters, joins, cross tables, several datasets.
+- Behind a generic `AnalysisAgent` interface. Its contract is the one UDP already has (answer + `map_layers`, 13.3), so UDP stays unchanged as the Hamburg adapter, and `udp_analysis` becomes a generic `analysis_agent` sub-agent.
+- The profile names the adapter (`udp` for Hamburg, none for Munich). If Munich gets an engine later (a Munich UDP or something else), it needs an adapter and a profile entry, nothing else.
+- Later: a chart output in the tier 2 contract (like `publish_map_layer`), so `SHOW_CHART` can be fed by both tiers.
+
+#### Routing
+
+| Goes to | Shape | Examples |
+|---|---|---|
+| CWYM map control (seconds) | show, filter, navigate, open a tool | "Zeige Fahrradstationen", "Filtere Krankenhäuser in Wandsbek", "Zoom nach Altona" |
+| Tier 1 (seconds, every city) | one dataset, optional filters, one fixed operation | "Wie viele Schulen in Altona?", "Verteilung der Energieklassen", "Die 5 ältesten Gebäude" |
+| Tier 2 (minutes, where configured) | spatial or multi-step | "Was ist am nächsten an …?", "Wo ist die Dichte am höchsten?", "Energieklasse je Eigentümer" |
+
+- The planner only gets the tools the profile offers. In Munich it never sees `analysis_agent`, so it can't route there by mistake.
+- Tier 1 takes precedence in every city, including Hamburg. One routing rule, one test set for both cities.
+- **A tier 2 question in a city without tier 2** gets a fixed, honest reply that this analysis isn't available in this portal, plus what is possible (e.g. "Ich kann dir die Schulen und Haltestellen anzeigen"). The planner must not approximate a spatial analysis with tier 1 operations; that is where wrong numbers come from. This needs its own planning rule and golden tests.
+
+### 14.5 Protocol additions
+
+New MapCommands, in `map_commands.py` and `docs/frontend-api.md`:
+
+| Type | Payload |
+|---|---|
+| `SHOW_CHART` | `title`, `chartType` (`bar` first), `data[{label, value, color?}]`, `datasetKey?`, `attribute?` |
+| `SHOW_SUGGESTIONS` | `items[]` (max. 3, in the answer language) |
+| `START_TOUR` | `tourId`, `steps[{delayMs, commands[MapCommand], narration}]`, `followUp`, `suggestions[]` |
+| `HIGHLIGHT_FEATURES` | `features` (FeatureCollection), `style` (`query`/`selection`), `label?`; replaces the unused `HIGHLIGHT_FEATURE` stub |
+
+- **Exclusive layer groups:** when `command_builder` activates a layer from a group in the profile, it adds a `DEACTIVATE_LAYER` for the other visible layers of that group. No new command is needed.
+- **Feature selection:** the addon converts clicks with OpenLayers `getCoordinateFromPixel`, which handles rotation, and calls `at_point`. Selected features travel in `RunAgentInput.state.selectedFeatures` (`datasetKey`, `id`, attributes; limited in number and size and validated like the rest of `state`, Section 10.4). The prompt presents them as data, not instructions.
+- **Suggestions:** the reply LLM ends with a suggestions block; `text_response` splits it off and emits `SHOW_SUGGESTIONS`. Clicking one sends it as the next user message.
+- **Tours:** a `start_tour` sub-agent loads the tour from the profile in the answer language and emits `START_TOUR`; the addon's tour player runs the step commands with the normal executor and types out the narration. The chat input is disabled while it plays, and the user can stop it.
+
+### 14.6 Plan
+
+**Phase 1, first deliverable: Munich on CWYM basics.** Layers, places and filters work in the Munich portal, in German and English.
+
+1. `CityProfile` and loader; a Hamburg profile that reproduces today's behaviour.
+2. Move the Hamburg-specific code (14.1) behind the `Protocol`s.
+3. `ChatLLMClient` (optional reasoning, `CWYM_LLM_*`), live test against IONOS.
+4. Language detection, bilingual prompts, use of `portal_context.languages`.
+5. Munich profile: check and adapt the geocoder, layer index and boundary sources.
+6. Munich portal on Masterportal 3.27 with the `chatWithYourMap` addon (inline `portal_context` handles the remote `services-internet.json`).
+7. Addon i18n.
+8. Tests: the existing suite passes with the Hamburg profile; Munich profile tests with mocked HTTP; opt-in Munich live tests (`CWYM_LIVE_TESTS=1`).
+
+**Phase 2: ASCEND features.**
+
+9. Tier 1 in `FilterAgent`: `file` source, typed dataset declarations, the fixed operations, full-data aggregation (no truncation), numbers inserted unchanged into the reply; ASCEND buildings as a Munich dataset with the refresh script.
+10. Tier 2: `udp_analysis` → generic `analysis_agent` behind `AnalysisAgent`, UDP as the Hamburg adapter, offered only where the profile configures it; "not available here" reply and planning rule for cities without tier 2.
+11. `SHOW_CHART`, `SHOW_SUGGESTIONS`, `START_TOUR`, `HIGHLIGHT_FEATURES` in backend, contract and addon.
+12. Exclusive layer groups.
+13. Feature selection by click and `state.selectedFeatures`.
+14. Harthof tour as `profiles/munich/tours/harthof.yaml`, figures as tier 1 placeholders.
+
+**Phase 3: retire ASCEND.**
+
+15. Golden tests for the Harthof scenarios (layer switching, statistics, top-N, lookup by address, selection follow-ups, tour, English), for tier 1 vs. tier 2 routing in both cities (incl. Hamburg counts that moved from UDP, and tier 2 questions in Munich).
+16. Run ASCEND and CWYM side by side against them; decommission `ascend-ai-backend` and the `chatAI` addon once CWYM passes.
+
+### 14.7 Open questions and risks
+
+- **Building data source.** Can Munich publish `gsm:ascend_gebaeude_gfi` via WFS or OGC API Features? Until then the file source has to be refreshed by hand.
+- **Munich geocoder and layer index.** Response formats, access (public or not) and place types still need checking (Phase 1, step 5).
+- **Munich boundaries.** An OAF/WFS source for Stadtbezirke (and finer units) is needed for area filters.
+- **Masterportal upgrade.** The ASCEND portal config has to be checked against 3.27.
+- **Munich's LLM provider.** Must support OpenAI-compatible tool calling; token budgets and prompts may need tuning per model, which the profile/environment split has to allow.
+- **Ticket breakdown.** The phases still need Jira tickets.
+- **Tier 1 boundary drift.** Every new request ("Durchschnitt je Eigentümer") tempts us to grow tier 1 into a second UDP. The rule in 14.4 and the closed operation list must hold; anything beyond goes to tier 2.
+- **Wrong but plausible numbers.** The two failure modes that matter most: aggregates over truncated results, and the reply LLM rewording computed numbers (14.4, rules 1 and 4). Both need tests, not just prompts.
+
+**Questions for Munich (meeting 3 Nov 2026).** The Munich formats are not known yet; we asked Munich for dummy data. Real response samples (5–10 hits each, saved as JSON) are worth more than invented data: the field mapping is what has to be right, and the samples become the mock HTTP data for the Munich profile tests.
+
+| Topic | Questions |
+|---|---|
+| Address search (`p1_adressen_4326`) | 2–3 sample responses: a full address, a street, a district name (e.g. "Harthof", "Milbertshofen-Am Hart"). Which `_search/template` id and parameters, or is a plain `_search` with a query body allowed? Which fields give the place type (address, street, Stadtbezirk, Bezirksteil), the coordinates and their CRS? Can a backend server call it (public, CORS/IP restrictions, rate limits)? |
+| Layer index (`portal.ascend_harthof`) | A sample response for "Energie" or "Gebäude". Which fields hold id, name, description, keywords? Do the ids match `services-internet.json`? Is there a city-wide index or only one per portal? |
+| Boundaries | A WFS/OAF service for Stadtbezirke (and Bezirksteile), with its name fields? A dump of `ascend_umgriff_projektgebiet`? |
+| Building data | Can `gsm:ascend_gebaeude_gfi` be published via WFS/OAF? If not, a GeoJSON export with the attribute list? Who owns the attribute values and how often do they change (is a manually refreshed file acceptable)? |
+| LLM and operations | Which provider and model; does it support OpenAI-compatible tool calling? May user questions be stored in traces (`CWYM_TRACE_CONTENT=full` vs `metadata`)? Can the ASCEND portal run Masterportal 3.27? |
+
+**Not blocked by Munich.** Phase 1 steps 1–4, 7 and 8 (14.6) can start without the Munich formats; only step 5 waits for the samples.
