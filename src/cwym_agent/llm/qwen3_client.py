@@ -15,12 +15,14 @@ reads ``.content`` and ``.tool_calls``, silently dropping ``reasoning``).
 
 import json
 import logging
+import time
 from collections.abc import Callable
 from typing import Any
 
 from haystack.dataclasses import StreamingChunk
 from openai import OpenAI
 
+from cwym_agent import observability
 from cwym_agent.settings import Qwen3Settings
 from cwym_agent.sub_agents import SUB_AGENT_NAMES, as_openai_tools
 
@@ -97,8 +99,16 @@ class _ToolCallAccumulator:
 
         return steps
 
+    def raw_calls(self) -> list[dict]:
+        """The tool calls exactly as streamed (name + unparsed argument
+        string), for the run trace."""
 
-def _log_completion_usage(label: str, max_tokens: int, usage, finish_reason: str | None) -> None:
+        return [{"name": entry["name"], "arguments": entry["arguments"]} for entry in self._by_index.values()]
+
+
+def _log_completion_usage(
+    label: str, max_tokens: int, usage, finish_reason: str | None, duration_s: float | None = None
+) -> None:
     """Dev-facing visibility into what each LLM call actually burned,
     against the budget it was given - added after three separate live
     bugs this session where a call silently ran out of completion
@@ -112,19 +122,32 @@ def _log_completion_usage(label: str, max_tokens: int, usage, finish_reason: str
     logged as a fallback with only what's known.
     """
 
+    took = f" in {duration_s:.1f}s" if duration_s is not None else ""
     if usage is None:
-        logger.info("Qwen3 %s: finish_reason=%s (no usage reported)", label, finish_reason)
+        logger.info("Qwen3 %s: finish_reason=%s (no usage reported)%s", label, finish_reason, took)
         return
 
     pct = (usage.completion_tokens / max_tokens * 100) if max_tokens else 0
     message = (
-        "Qwen3 %s: prompt=%d completion=%d/%d (%.0f%%) finish_reason=%s"
+        "Qwen3 %s: prompt=%d completion=%d/%d (%.0f%%) finish_reason=%s%s"
     )
-    args = (label, usage.prompt_tokens, usage.completion_tokens, max_tokens, pct, finish_reason)
+    args = (label, usage.prompt_tokens, usage.completion_tokens, max_tokens, pct, finish_reason, took)
     if finish_reason == "length":
         logger.warning(message + " - TRUNCATED, ran out of completion tokens", *args)
     else:
         logger.info(message, *args)
+
+
+def _record_failed_call(
+    label: str, started: float, max_tokens: int, exc: BaseException, prompt: str | None = None
+) -> None:
+    """A call that raised (timeout, connection error - after the SDK's own
+    retries) still belongs in the logs and the run trace, with how long
+    it took to fail."""
+
+    duration = time.monotonic() - started
+    logger.warning("Qwen3 %s failed after %.1fs: %s: %s", label, duration, type(exc).__name__, exc)
+    observability.record_llm_call(label, duration, max_tokens=max_tokens, prompt=prompt, error=exc)
 
 
 class Qwen3Client:
@@ -152,41 +175,57 @@ class Qwen3Client:
         several, possibly the same tool more than once).
         """
 
-        stream = self._client.chat.completions.create(
-            model=self.settings.model,
-            messages=[
-                {"role": "system", "content": _PLAN_SYSTEM_PROMPT},
-                {"role": "user", "content": query},
-            ],
-            tools=as_openai_tools(),
-            tool_choice="auto",
-            max_tokens=self.settings.max_tokens_plan,
-            stream=True,
-            stream_options={"include_usage": True},
-        )
-
-        accumulator = _ToolCallAccumulator()
+        started = time.monotonic()
         usage = None
         finish_reason = None
+        accumulator = _ToolCallAccumulator()
+        try:
+            stream = self._client.chat.completions.create(
+                model=self.settings.model,
+                messages=[
+                    {"role": "system", "content": _PLAN_SYSTEM_PROMPT},
+                    {"role": "user", "content": query},
+                ],
+                tools=as_openai_tools(),
+                tool_choice="auto",
+                max_tokens=self.settings.max_tokens_plan,
+                stream=True,
+                stream_options={"include_usage": True},
+            )
 
-        for chunk in stream:
-            if chunk.usage:
-                usage = chunk.usage
-            if not chunk.choices:
-                continue
-            choice = chunk.choices[0]
-            if choice.finish_reason:
-                finish_reason = choice.finish_reason
-            delta = choice.delta
+            for chunk in stream:
+                if chunk.usage:
+                    usage = chunk.usage
+                if not chunk.choices:
+                    continue
+                choice = chunk.choices[0]
+                if choice.finish_reason:
+                    finish_reason = choice.finish_reason
+                delta = choice.delta
 
-            reasoning_delta = getattr(delta, "reasoning", None)
-            if reasoning_delta and streaming_callback:
-                streaming_callback(StreamingChunk(content=reasoning_delta))
+                reasoning_delta = getattr(delta, "reasoning", None)
+                if reasoning_delta and streaming_callback:
+                    streaming_callback(StreamingChunk(content=reasoning_delta))
 
-            if delta.tool_calls:
-                accumulator.add(delta.tool_calls)
+                if delta.tool_calls:
+                    accumulator.add(delta.tool_calls)
+        except Exception as exc:
+            _record_failed_call("plan", started, self.settings.max_tokens_plan, exc)
+            raise
 
-        _log_completion_usage("plan", self.settings.max_tokens_plan, usage, finish_reason)
+        duration = time.monotonic() - started
+        _log_completion_usage("plan", self.settings.max_tokens_plan, usage, finish_reason, duration)
+        # The raw tool calls, before as_steps() drops unknown names or
+        # malformed arguments - exactly what's needed when a plan comes
+        # out empty.
+        observability.record_llm_call(
+            "plan",
+            duration,
+            max_tokens=self.settings.max_tokens_plan,
+            usage=usage,
+            finish_reason=finish_reason,
+            tool_calls=accumulator.raw_calls(),
+        )
         return {"steps": accumulator.as_steps()}
 
     def generate(
@@ -219,36 +258,51 @@ class Qwen3Client:
         """
 
         effective_max_tokens = max_tokens if max_tokens is not None else self.settings.max_tokens_generate
-        stream = self._client.chat.completions.create(
-            model=self.settings.model,
-            messages=[
-                {"role": "system", "content": _GENERATE_SYSTEM_PROMPT},
-                {"role": "user", "content": prompt},
-            ],
-            max_tokens=effective_max_tokens,
-            stream=True,
-            stream_options={"include_usage": True},
-        )
-
+        started = time.monotonic()
         chunks: list[str] = []
         usage = None
         finish_reason = None
+        try:
+            stream = self._client.chat.completions.create(
+                model=self.settings.model,
+                messages=[
+                    {"role": "system", "content": _GENERATE_SYSTEM_PROMPT},
+                    {"role": "user", "content": prompt},
+                ],
+                max_tokens=effective_max_tokens,
+                stream=True,
+                stream_options={"include_usage": True},
+            )
 
-        for chunk in stream:
-            if chunk.usage:
-                usage = chunk.usage
-            if not chunk.choices:
-                continue
-            choice = chunk.choices[0]
-            if choice.finish_reason:
-                finish_reason = choice.finish_reason
-            delta = choice.delta
+            for chunk in stream:
+                if chunk.usage:
+                    usage = chunk.usage
+                if not chunk.choices:
+                    continue
+                choice = chunk.choices[0]
+                if choice.finish_reason:
+                    finish_reason = choice.finish_reason
+                delta = choice.delta
 
-            content_delta = delta.content
-            if content_delta:
-                chunks.append(content_delta)
-                if streaming_callback:
-                    streaming_callback(StreamingChunk(content=content_delta))
+                content_delta = delta.content
+                if content_delta:
+                    chunks.append(content_delta)
+                    if streaming_callback:
+                        streaming_callback(StreamingChunk(content=content_delta))
+        except Exception as exc:
+            _record_failed_call(label, started, effective_max_tokens, exc, prompt=prompt)
+            raise
 
-        _log_completion_usage(label, effective_max_tokens, usage, finish_reason)
-        return "".join(chunks)
+        duration = time.monotonic() - started
+        output = "".join(chunks)
+        _log_completion_usage(label, effective_max_tokens, usage, finish_reason, duration)
+        observability.record_llm_call(
+            label,
+            duration,
+            max_tokens=effective_max_tokens,
+            usage=usage,
+            finish_reason=finish_reason,
+            prompt=prompt,
+            output=output,
+        )
+        return output

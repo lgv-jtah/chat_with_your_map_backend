@@ -426,3 +426,82 @@ def test_query_endpoint_oversized_state_returns_400():
     response = client.post("/api/query", json=body)
 
     assert response.status_code == 400
+
+
+class _TraceCollector:
+    """Collects the run_trace lines the trace logger writes."""
+
+    def __init__(self):
+        import logging
+
+        from cwym_agent.observability import TRACE_LOGGER_NAME
+
+        self.records: list[dict] = []
+        collector = self
+
+        class Handler(logging.Handler):
+            def emit(self, record):
+                collector.records.append(json.loads(record.getMessage()))
+
+        self._handler = Handler()
+        self._logger = logging.getLogger(TRACE_LOGGER_NAME)
+
+    def __enter__(self):
+        self._logger.addHandler(self._handler)
+        return self
+
+    def __exit__(self, *exc):
+        self._logger.removeHandler(self._handler)
+
+
+def test_query_endpoint_writes_one_trace_per_turn():
+    body = _run_input("Zeige mir Fahrradstationen in Wandsbek", thread_id="thread-trace")
+    body["runId"] = "run-trace"
+    body["messages"] = [
+        {"id": "m0", "role": "user", "content": "Hallo"},
+        {"id": "m1", "role": "assistant", "content": "Hallo! Was möchtest du sehen?"},
+        {"id": "m2", "role": "user", "content": "Zeige mir Fahrradstationen in Wandsbek"},
+    ]
+
+    with _TraceCollector() as traces:
+        with client.stream("POST", "/api/query", json=body) as response:
+            events = _parse_sse_events("".join(response.iter_text()))
+
+    [record] = traces.records
+    assert record["threadId"] == "thread-trace"
+    assert record["runId"] == "run-trace"
+    assert record["status"] == "ok"
+    assert record["request"]["query"] == "Zeige mir Fahrradstationen in Wandsbek"
+    assert record["request"]["history"] == [
+        {"role": "user", "text": "Hallo"},
+        {"role": "assistant", "text": "Hallo! Was möchtest du sehen?"},
+    ]
+    assert record["summary"]["steps"] == ["location_extractor", "layer_resolver", "action_detector"]
+    assert record["summary"]["commands"] == [cmd["type"] for cmd in _command_builder_events(events)]
+    answer = "".join(e["delta"] for e in events if e["type"] == "TEXT_MESSAGE_CONTENT")
+    assert record["answer"] == answer
+    assert record["planning"]["reasoning"]
+
+
+def test_query_endpoint_pipeline_failure_is_traced_with_traceback(monkeypatch, caplog):
+    from cwym_agent.api import main as api_main
+
+    def failing_run_pipeline(*args, **kwargs):
+        raise RuntimeError("vLLM unreachable")
+
+    monkeypatch.setattr(api_main, "run_pipeline", failing_run_pipeline)
+
+    with _TraceCollector() as traces, caplog.at_level("INFO"):
+        with client.stream("POST", "/api/query", json=_run_input("Zeige mir Schulen", thread_id="thread-err")) as response:
+            events = _parse_sse_events("".join(response.iter_text()))
+
+    assert [e["type"] for e in events][-1] == "RUN_ERROR"
+    [record] = traces.records
+    assert record["status"] == "error"
+    assert record["error"]["type"] == "RuntimeError"
+    assert "vLLM unreachable" in record["error"]["traceback"]
+
+    [failure] = [r for r in caplog.records if r.getMessage() == "Pipeline failed"]
+    assert failure.exc_info is not None
+    assert failure.thread_id == "thread-err"
+    assert failure.run_id == "run-1"

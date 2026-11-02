@@ -1,7 +1,8 @@
 .DEFAULT_GOAL := help
 
 .PHONY: help install run run-offvpn test test-live clean \
-	docker-build docker-up docker-up-offvpn docker-down docker-logs
+	docker-build docker-up docker-up-offvpn docker-down docker-logs \
+	trace traces-queries traces-export
 
 help:
 	@echo "Available targets:"
@@ -18,6 +19,11 @@ help:
 	@echo "  docker-up-offvpn   Like docker-up, but use Qwen3 on IONOS (no VPN needed)"
 	@echo "  docker-down        Stop and remove the container"
 	@echo "  docker-logs        Follow the container logs (startup warm-up takes minutes)"
+	@echo ""
+	@echo "Run traces (container, see README \"Logging & traces\"):"
+	@echo "  trace ID=<id>      Show the conversation of a threadId/runId (prefix is enough)"
+	@echo "  traces-queries     Write all user queries with their outcome to queries-<date>.csv"
+	@echo "  traces-export      Copy the trace files out of the container into traces-<date>/"
 
 install:
 	uv sync
@@ -62,3 +68,14 @@ docker-down:
 
 docker-logs:
 	docker compose logs -f
+
+trace:
+	@test -n "$(ID)" || (echo "usage: make trace ID=<threadId or runId prefix>" && exit 2)
+	docker compose exec -T cwym-agent python -m cwym_agent.traces show "$(ID)"
+
+traces-queries:
+	docker compose exec -T cwym-agent python -m cwym_agent.traces queries > queries-$$(date +%Y%m%d-%H%M%S).csv
+
+traces-export:
+	mkdir -p traces-$$(date +%Y%m%d-%H%M%S) && \
+	docker compose cp cwym-agent:/var/log/cwym/. traces-$$(date +%Y%m%d-%H%M%S)/

@@ -62,6 +62,7 @@ built nothing. A resolved layer or location wins: "Zeige Teile von
 Altona" is still a map request, not the Share panel.
 """
 
+import logging
 import re
 import uuid
 
@@ -95,6 +96,8 @@ from cwym_agent.map_commands import (
     ZoomToExtentCommand,
     ZoomToExtentPayload,
 )
+
+logger = logging.getLogger(__name__)
 
 # Action labels that map straight to ACTIVATE_LAYER/NAVIGATE_TO_LOCATION
 # commands. "Öffne" and "Filter" get their own handling below (OPEN_TOOL,
@@ -145,7 +148,12 @@ class CommandBuilderComponent:
         bridge: AGUIEventBridge | None = None,
     ):
         commands = self._build_commands(aggregated, context)
-
+        if commands:
+            logger.info("command_builder: %s", [cmd["type"] for cmd in commands])
+        else:
+            # The case behind "Leider konnte ich das gerade nicht auf der
+            # Karte umsetzen" - worth seeing at a glance.
+            logger.info("command_builder: no map commands built")
         if bridge:
             for cmd in commands:
                 bridge.command(cmd)

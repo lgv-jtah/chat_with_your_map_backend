@@ -28,17 +28,31 @@ analysis, and a rewording model is exactly where "19 Stationen" could
 become "rund 20". If the UDP agent failed, a fixed message says so.
 """
 
+import logging
 import uuid
 from typing import Any
 
 from ag_ui.core import TextMessageContentEvent, TextMessageEndEvent, TextMessageStartEvent
 from haystack import component
 
+from cwym_agent import observability
 from cwym_agent.bridge import AGUIEventBridge
 from cwym_agent.geodata import clarification
 from cwym_agent.geodata.conversation_context import ConversationContext, render_context_block
 from cwym_agent.geodata.portal_catalog_resolver import LayerCatalog
 from cwym_agent.llm.qwen3_client import Qwen3Client
+
+logger = logging.getLogger(__name__)
+
+
+def _log_answer(text: str, verbatim: bool) -> None:
+    source = "fixed/verbatim" if verbatim else "generated"
+    if observability.content_logged():
+        logger.info("text_response: %s answer (%d chars): %r", source, len(text), text)
+    else:
+        logger.info("text_response: %s answer (%d chars)", source, len(text))
+    if not text.strip():
+        logger.warning("text_response: the answer is empty")
 
 
 @component
@@ -65,6 +79,7 @@ class TextResponseComponent:
                 bridge.emit(TextMessageStartEvent(message_id=message_id))
                 bridge.emit(TextMessageContentEvent(message_id=message_id, delta=verbatim))
                 bridge.emit(TextMessageEndEvent(message_id=message_id))
+            _log_answer(verbatim, verbatim=True)
             return {"response_text": verbatim}
 
         prompt = self._build_response_prompt(aggregated, query, commands or [], context, layer_catalog)
@@ -85,6 +100,7 @@ class TextResponseComponent:
         else:
             response_text = self.llm.generate(prompt, label="text_response")
 
+        _log_answer(response_text, verbatim=False)
         return {"response_text": response_text}
 
     @staticmethod

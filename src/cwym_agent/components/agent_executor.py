@@ -9,11 +9,13 @@ provided.
 """
 
 import logging
+import time
 from dataclasses import asdict, is_dataclass, replace
 from typing import Any
 
 from haystack import component
 
+from cwym_agent import observability
 from cwym_agent.bridge import AGUIEventBridge
 from cwym_agent.geodata.conversation_context import ConversationContext
 from cwym_agent.geodata.portal_catalog_resolver import LayerCatalog
@@ -61,6 +63,24 @@ def _tool_call_result_view(agent_name: str, serialized_result):
             ],
         }
     return serialized_result
+
+
+def _result_summary(result) -> str:
+    """A short, content-light view of a sub-agent result for log lines -
+    names and counts, never geometry. The full result is in the trace."""
+
+    if result is None:
+        return "None"
+    if isinstance(result, list):
+        return "[" + ", ".join(_result_summary(item) for item in result[:5]) + (", ..." if len(result) > 5 else "") + "]"
+    kind = type(result).__name__
+    # A location's name can be a street address - user content.
+    attributes = ("number_matched", "action_type", "layer_id") + (("name",) if observability.content_logged() else ())
+    for attribute in attributes:
+        value = getattr(result, attribute, None)
+        if value is not None:
+            return f"{kind}({attribute}={value!r})"
+    return kind
 
 
 def _dependencies_first(steps: list[dict]) -> list[dict]:
@@ -131,7 +151,7 @@ class AgentExecutorComponent:
             # step once it's already done (a UDP analysis: minutes of
             # nothing, then the step appearing complete).
             call_id = bridge.tool_call_start(agent_name, args) if bridge else None
-            result = self._run_sub_agent(
+            result = self._timed_sub_agent(
                 agent_name, args, allowed_layer_ids, results_by_agent, context, layer_catalog
             )
             results_by_agent[agent_name] = result
@@ -146,9 +166,10 @@ class AgentExecutorComponent:
         implicit_query = self._implicit_filter_query(plan_json.get("steps", []), results_by_agent, layer_catalog)
         if implicit_query is not None:
             logger.info("agent_executor: layer + area resolved but no filter planned - filtering %r", implicit_query)
+            observability.note("implicit filter_agent added: layer + area resolved but no filter planned")
             args = {"query": implicit_query}
             call_id = bridge.tool_call_start("filter_agent", args) if bridge else None
-            result = self._run_sub_agent(
+            result = self._timed_sub_agent(
                 "filter_agent", args, allowed_layer_ids, results_by_agent, context, layer_catalog
             )
             results_by_agent["filter_agent"] = result
@@ -196,6 +217,21 @@ class AgentExecutorComponent:
             (s.get("args", {}).get("query") for s in steps if s.get("agent_name") == "layer_resolver"), None
         )
         return f"{layer_query or layer.name} in {location.name}"
+
+    def _timed_sub_agent(self, agent_name: str, args: dict, *rest):
+        """``_run_sub_agent`` plus one log line with its duration and a
+        short view of its result."""
+
+        started = time.monotonic()
+        try:
+            result = self._run_sub_agent(agent_name, args, *rest)
+        except Exception:
+            logger.warning("agent_executor: %s failed after %.1fs", agent_name, time.monotonic() - started)
+            raise
+        logger.info(
+            "agent_executor: %s took %.1fs -> %s", agent_name, time.monotonic() - started, _result_summary(result)
+        )
+        return result
 
     def _run_sub_agent(
         self,
