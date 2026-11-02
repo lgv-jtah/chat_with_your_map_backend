@@ -28,6 +28,7 @@ from haystack import Pipeline
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator, model_validator
 
 from cwym_agent.bridge import AGUIEventBridge
+from cwym_agent.city_profile import CityProfileError, load_profile
 from cwym_agent.geodata import clarification
 from cwym_agent.geodata.conversation_context import build_context, current_query
 from cwym_agent.geodata.portal_catalog_resolver import PortalCatalogResolver, build_inline_catalog
@@ -75,6 +76,17 @@ async def lifespan(app: FastAPI):
     # - better to pay that cost (and fail fast if the layer catalog or
     # embedding model is unreachable) before accepting traffic than to
     # block a user's first query.
+    #
+    # Validate the city profile first (cheap): a missing or invalid profile
+    # stops startup right away with a message naming the file and field,
+    # instead of after - or in the middle of - the multi-minute warm-up.
+    # Starlette still logs its own traceback after this message.
+    try:
+        load_profile()
+    except CityProfileError as e:
+        logger.error("Startup aborted - %s", e)
+        raise SystemExit(1) from None
+
     logger.info(
         "Warming up pipeline (fetching + embedding Hamburg's ~6,500 map "
         "layers) - this takes a few minutes, especially on the first run "

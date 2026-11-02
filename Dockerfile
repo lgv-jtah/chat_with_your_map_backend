@@ -44,6 +44,12 @@ RUN mkdir -p /var/log/cwym && chown app:app /var/log/cwym
 
 COPY --from=builder --chown=app:app /app/.venv /app/.venv
 
+# City profiles (CWYM_CITY_PROFILE selects one, default hamburg). The package
+# is installed non-editable, so the loader can't find the repo's profiles/
+# on its own. Mount a directory over /app/profiles to use other profiles.
+COPY --chown=app:app profiles /app/profiles
+ENV CWYM_PROFILES_DIR=/app/profiles
+
 USER app
 WORKDIR /app
 
