@@ -12,6 +12,7 @@ in the ``chatWithYourMap`` Masterportal addon frontend
 mode to this backend keeps the same demo experience.
 """
 
+from cwym_agent.geodata.actions import detect_action
 from cwym_agent.geodata.types import (
     ActionMatch,
     AnalysisResult,
@@ -45,15 +46,8 @@ _LAYERS: list[tuple[tuple[str, ...], LayerMatch]] = [
     ),
 ]
 
-_ACTION_KEYWORDS: list[tuple[tuple[str, ...], str]] = [
-    (("navigiere", "navigate", "fahre nach"), "Navigieren"),
-    (("filter", "filtere"), "Filter"),
-    (("öffne", "oeffne", "open"), "Öffne"),
-]
-
 _DEFAULT_LAYER = LayerMatch("Default Layer", "1234", 0.8)
 _DEFAULT_LOCATION = LocationMatch("Hamburg", 53.5511, 9.9937, 0.9)
-_DEFAULT_ACTION = "Zeigen"
 
 
 class StubDataServices:
@@ -141,10 +135,4 @@ class StubDataServices:
         )
 
     def detect_action(self, query: str) -> ActionMatch:
-        lowered = query.lower()
-
-        for keywords, action_type in _ACTION_KEYWORDS:
-            if any(keyword in lowered for keyword in keywords):
-                return ActionMatch(action_type, 0.9)
-
-        return ActionMatch(_DEFAULT_ACTION, 0.85)
+        return detect_action(query)

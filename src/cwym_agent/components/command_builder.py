@@ -112,7 +112,9 @@ _TOOL_KEYWORDS: list[tuple[tuple[str, ...], str]] = [
     (("drucke", "drucken", "druck", "print"), "PRINT"),
     (("legende", "legend"), "LEGEND"),
     (("teile", "teilen", "share"), "SHARE"),
-    (("über uns", "impressum", "about"), "ABOUT"),
+    # Not a bare "about": "tell me about yourself" is no request for the
+    # About panel.
+    (("über uns", "impressum", "about us", "imprint", "legal notice"), "ABOUT"),
 ]
 
 

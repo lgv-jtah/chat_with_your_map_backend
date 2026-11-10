@@ -36,6 +36,7 @@ from typing import Any
 import httpx
 
 from cwym_agent.city_profile import CityProfile
+from cwym_agent.geodata.actions import detect_action
 from cwym_agent.geodata.adapters import build_boundary_source, build_geocoder, build_layer_catalog_source
 from cwym_agent.geodata.filter_agent import FilterAgent
 from cwym_agent.geodata.layer_search import LayerSearchService
@@ -53,12 +54,6 @@ from cwym_agent.llm.qwen3_client import Qwen3Client
 
 logger = logging.getLogger(__name__)
 
-_ACTION_KEYWORDS: list[tuple[tuple[str, ...], str]] = [
-    (("navigiere", "navigate", "fahre nach"), "Navigieren"),
-    (("filter", "filtere"), "Filter"),
-    (("öffne", "oeffne", "open"), "Öffne"),
-]
-_DEFAULT_ACTION = "Zeigen"
 
 _LAYER_SELECTION_PROMPT_TEMPLATE = (
     "Du hilfst dabei, aus einer Liste von Kandidaten-Kartenebenen die am "
@@ -302,10 +297,4 @@ class RealDataServices:
         return self.filter_agent.filter(query, layer, location, mode=mode, prior_conditions=prior_conditions)
 
     def detect_action(self, query: str) -> ActionMatch:
-        lowered = query.lower()
-
-        for keywords, action_type in _ACTION_KEYWORDS:
-            if any(keyword in lowered for keyword in keywords):
-                return ActionMatch(action_type, 0.9)
-
-        return ActionMatch(_DEFAULT_ACTION, 0.85)
+        return detect_action(query)

@@ -12,8 +12,10 @@ names.
 import json
 
 import httpx2
+import pytest
 
 from cwym_agent.city_profile import load_profile
+from cwym_agent.geodata.actions import detect_action_type
 from cwym_agent.geodata.real_data_services import RealDataServices
 from cwym_agent.geodata.types import ActionMatch, LayerMatch, LocationMatch
 from cwym_agent.llm.qwen3_client import Qwen3Client
@@ -233,3 +235,27 @@ class TestDetectAction:
         service = _service(locations=FakeLocations(None))
 
         assert service.detect_action("Zeige mir Fahrradstationen") == ActionMatch("Zeigen", 0.85)
+
+
+@pytest.mark.parametrize(
+    "query, action",
+    [
+        ("Navigiere nach Altona", "Navigieren"),
+        ("Fahre nach Wandsbek", "Navigieren"),
+        ("Take me to Altona", "Navigieren"),
+        ("Go to the harbour", "Navigieren"),
+        ("Zoom to Wandsbek", "Navigieren"),
+        ("Filtere Krankenhäuser in Wandsbek", "Filter"),
+        ("Filter hospitals with more than 100 beds", "Filter"),
+        ("Kontaktformular öffnen", "Öffne"),
+        ("Open the legend", "Öffne"),
+        ("Zeig mir Fahrradstationen", "Zeigen"),
+        ("Show me bike stations", "Zeigen"),
+        # keywords inside other words are no action
+        ("Zeig mir geöffnete Apotheken", "Zeigen"),
+        ("Show me the opening hours of pools", "Zeigen"),
+        ("Wo gibt es Luftfilter-Messstationen?", "Zeigen"),
+    ],
+)
+def test_detect_action_keywords(query, action):
+    assert detect_action_type(query) == action
