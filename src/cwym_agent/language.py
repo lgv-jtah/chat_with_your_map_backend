@@ -48,6 +48,11 @@ _GERMAN_MARKERS = frozenset({
     "oeffne", "blende", "filtere", "entferne",
     "karte", "ebene", "ebenen", "alle", "allen", "jede", "jeder",
     "bitte", "danke", "hallo", "hier", "dort", "gerne", "ja", "nein",
+    # Map vocabulary, for short commands without a function word
+    # ("Filtere Krankenhäuser in Wandsbek").
+    "krankenhaus", "krankenhaeuser", "schule", "schulen", "grundschulen", "kita", "kitas",
+    "spielplatz", "spielplaetze", "apotheke", "apotheken", "haltestelle", "haltestellen",
+    "fahrradstationen", "gebaeude", "strasse", "bezirk", "stadtteil", "gebiet",
 })
 
 _ENGLISH_MARKERS = frozenset({
@@ -60,6 +65,12 @@ _ENGLISH_MARKERS = frozenset({
     "show", "give", "tell", "find", "display", "open", "remove", "hide", "please",
     "map", "all", "each", "every", "any", "there", "here",
     "thanks", "thank", "hello", "hi", "yes",
+    # Map vocabulary, for short commands without a function word
+    # ("Filter hospitals in Wandsbek"). Not "park(s)", "bus", "station":
+    # German uses them too.
+    "hospital", "hospitals", "school", "schools", "kindergartens", "playground", "playgrounds",
+    "pharmacy", "pharmacies", "stops", "bike", "bikes", "buildings", "street", "district",
+    "districts", "area", "areas",
 })
 
 Language = Literal["de", "en"]
