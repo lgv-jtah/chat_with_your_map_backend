@@ -32,6 +32,7 @@ import os
 
 import pytest
 
+from cwym_agent.city_profile import load_profile
 from cwym_agent.geodata.conversation_context import (
     Area,
     ConversationContext,
@@ -52,7 +53,7 @@ pytestmark = pytest.mark.skipif(
 @pytest.fixture(scope="module")
 def services() -> RealDataServices:
     llm = Qwen3Client(Qwen3Settings())
-    return RealDataServices(llm=llm)
+    return RealDataServices(load_profile("hamburg"), llm=llm)
 
 
 def _run_turn(services: RealDataServices, query: str, context: ConversationContext | None = None):
@@ -66,7 +67,7 @@ def _run_turn(services: RealDataServices, query: str, context: ConversationConte
     from cwym_agent.components.master_agent import MasterAgentComponent
     from cwym_agent.components.result_aggregator import ResultAggregatorComponent
 
-    master_agent = MasterAgentComponent(llm=services.llm)
+    master_agent = MasterAgentComponent(services.profile, llm=services.llm)
     agent_executor = AgentExecutorComponent(data_services=services)
     aggregator = ResultAggregatorComponent()
     command_builder = CommandBuilderComponent()

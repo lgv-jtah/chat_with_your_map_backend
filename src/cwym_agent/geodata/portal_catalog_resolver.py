@@ -1,8 +1,9 @@
 """Scopes the pipeline to what a specific Masterportal instance actually
 exposes (``cmym-agent-architecture.md`` Section 8).
 
-``RealDataServices.resolve_layer`` searches Hamburg's full ~6,500-layer
-catalog unscoped by default - correct for finding *any* Hamburg layer,
+``RealDataServices.resolve_layer`` searches the city's full layer
+catalog (thousands of layers) unscoped by default - correct for finding
+*any* layer of the city,
 but wrong for a specific portal instance that only registers a small
 curated subset (e.g. ``chat_with_your_map_portal``'s ~30 layers):
 resolving to a layer outside that subset produces an ``ACTIVATE_LAYER``

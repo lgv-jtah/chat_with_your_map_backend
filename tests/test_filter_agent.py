@@ -42,6 +42,8 @@ _WANDSBEK_BOUNDARY = {
     "coordinates": [[[10.0, 53.5], [10.1, 53.5], [10.1, 53.6], [10.0, 53.6], [10.0, 53.5]]],
 }
 
+_AREA_TERMS = ["Stadtteil", "Bezirk"]
+
 
 class TestFilterOperators:
     def test_exported_for_build_context_reuse(self):
@@ -145,12 +147,12 @@ def _oaf_handler(queryables_response=None, items_response=None):
 class TestFilterAgentFilter:
     def test_non_oaf_layer_returns_none(self):
         layer = LayerMatch(name="X", layer_id="1", confidence=0.9, typ="WMS")
-        agent = FilterAgent(llm=_mock_llm("[]"))
+        agent = FilterAgent(_AREA_TERMS, llm=_mock_llm("[]"))
 
         assert agent.filter("query", layer) is None
 
     def test_no_layer_returns_none(self):
-        agent = FilterAgent(llm=_mock_llm("[]"))
+        agent = FilterAgent(_AREA_TERMS, llm=_mock_llm("[]"))
         assert agent.filter("query", None) is None
 
     def test_attribute_condition_builds_correct_filter_and_returns_features(self):
@@ -172,7 +174,7 @@ class TestFilterAgentFilter:
 
         client = httpx.Client(transport=httpx.MockTransport(handler))
         reply = json.dumps([{"field": "betten", "operator": "gt", "value": 100}])
-        agent = FilterAgent(llm=_mock_llm(reply), http_client=client)
+        agent = FilterAgent(_AREA_TERMS, llm=_mock_llm(reply), http_client=client)
 
         result = agent.filter("Krankenhäuser mit mehr als 100 Betten", _OAF_LAYER)
 
@@ -200,7 +202,7 @@ class TestFilterAgentFilter:
 
         client = httpx.Client(transport=httpx.MockTransport(handler))
         reply = json.dumps([{"field": "betten", "operator": "gt", "value": 1}])
-        agent = FilterAgent(llm=_mock_llm(reply), http_client=client)
+        agent = FilterAgent(_AREA_TERMS, llm=_mock_llm(reply), http_client=client)
 
         result = agent.filter("query", _OAF_LAYER)
 
@@ -218,7 +220,7 @@ class TestFilterAgentFilter:
             return httpx.Response(200, json={"type": "FeatureCollection", "numberMatched": 1, "features": []})
 
         client = httpx.Client(transport=httpx.MockTransport(handler))
-        agent = FilterAgent(llm=_mock_llm("[]"), http_client=client)
+        agent = FilterAgent(_AREA_TERMS, llm=_mock_llm("[]"), http_client=client)
         location = LocationMatch("Wandsbek", 53.6, 10.1, 0.9, boundary=_WANDSBEK_BOUNDARY)
 
         result = agent.filter("Krankenhäuser in Wandsbek", _OAF_LAYER, location)
@@ -238,7 +240,7 @@ class TestFilterAgentFilter:
 
         client = httpx.Client(transport=httpx.MockTransport(handler))
         reply = json.dumps([{"field": "betten", "operator": "gt", "value": 50}])
-        agent = FilterAgent(llm=_mock_llm(reply), http_client=client)
+        agent = FilterAgent(_AREA_TERMS, llm=_mock_llm(reply), http_client=client)
         location = LocationMatch("Wandsbek", 53.6, 10.1, 0.9, boundary=_WANDSBEK_BOUNDARY)
 
         agent.filter("Krankenhäuser mit mehr als 50 Betten in Wandsbek", _OAF_LAYER, location)
@@ -257,7 +259,7 @@ class TestFilterAgentFilter:
             return httpx.Response(200, json={"type": "FeatureCollection", "features": []})
 
         client = httpx.Client(transport=httpx.MockTransport(handler))
-        agent = FilterAgent(llm=_mock_llm("[]"), http_client=client)
+        agent = FilterAgent(_AREA_TERMS, llm=_mock_llm("[]"), http_client=client)
 
         result = agent.filter("Krankenhäuser", _OAF_LAYER)
 
@@ -267,14 +269,14 @@ class TestFilterAgentFilter:
     def test_llm_hallucinated_field_is_dropped(self):
         client = httpx.Client(transport=httpx.MockTransport(_oaf_handler()))
         reply = json.dumps([{"field": "nicht_existent", "operator": "eq", "value": "x"}])
-        agent = FilterAgent(llm=_mock_llm(reply), http_client=client)
+        agent = FilterAgent(_AREA_TERMS, llm=_mock_llm(reply), http_client=client)
 
         # No valid condition and no boundary -> nothing to filter by.
         assert agent.filter("query", _OAF_LAYER) is None
 
     def test_unparseable_llm_reply_falls_back_to_empty_conditions(self):
         client = httpx.Client(transport=httpx.MockTransport(_oaf_handler()))
-        agent = FilterAgent(llm=_mock_llm("nicht JSON"), http_client=client)
+        agent = FilterAgent(_AREA_TERMS, llm=_mock_llm("nicht JSON"), http_client=client)
 
         assert agent.filter("query", _OAF_LAYER) is None
 
@@ -289,7 +291,7 @@ class TestFilterAgentFilter:
 
         client = httpx.Client(transport=httpx.MockTransport(handler))
         reply = json.dumps([{"field": "betten", "operator": "gt", "value": 100}])
-        agent = FilterAgent(llm=_mock_llm(reply), http_client=client)
+        agent = FilterAgent(_AREA_TERMS, llm=_mock_llm(reply), http_client=client)
         prior = [FilterCondition(field="name", operator="contains", value="Klinik")]
 
         result = agent.filter("mehr als 100 Betten", _OAF_LAYER, mode="replace", prior_conditions=prior)
@@ -305,7 +307,7 @@ class TestFilterAgentFilter:
 
         client = httpx.Client(transport=httpx.MockTransport(handler))
         reply = json.dumps([{"field": "betten", "operator": "gt", "value": 100}])
-        agent = FilterAgent(llm=_mock_llm(reply), http_client=client)
+        agent = FilterAgent(_AREA_TERMS, llm=_mock_llm(reply), http_client=client)
         prior = [FilterCondition(field="name", operator="contains", value="Klinik")]
 
         result = agent.filter("mehr als 100 Betten", _OAF_LAYER, mode="refine", prior_conditions=prior)
@@ -327,7 +329,7 @@ class TestFilterAgentFilter:
 
         client = httpx.Client(transport=httpx.MockTransport(handler))
         reply = json.dumps([{"field": "name", "operator": "eq", "value": "Gymnasium"}])
-        agent = FilterAgent(llm=_mock_llm(reply), http_client=client)
+        agent = FilterAgent(_AREA_TERMS, llm=_mock_llm(reply), http_client=client)
         prior = [FilterCondition(field="name", operator="eq", value="Grundschule")]
 
         result = agent.filter("Gymnasien", _OAF_LAYER, mode="refine", prior_conditions=prior)
@@ -343,7 +345,7 @@ class TestFilterAgentFilter:
 
         client = httpx.Client(transport=httpx.MockTransport(handler))
         reply = json.dumps([{"field": "betten", "operator": "gt", "value": 100}])
-        agent = FilterAgent(llm=_mock_llm(reply), http_client=client)
+        agent = FilterAgent(_AREA_TERMS, llm=_mock_llm(reply), http_client=client)
 
         result = agent.filter("mehr als 100 Betten", _OAF_LAYER, mode="refine", prior_conditions=None)
 
@@ -357,7 +359,7 @@ class TestFilterAgentFilter:
             return httpx.Response(200, json={"type": "FeatureCollection", "numberMatched": 0, "features": []})
 
         client = httpx.Client(transport=httpx.MockTransport(handler))
-        agent = FilterAgent(llm=_mock_llm("[]"), http_client=client)
+        agent = FilterAgent(_AREA_TERMS, llm=_mock_llm("[]"), http_client=client)
         location = LocationMatch("Wandsbek", 53.6, 10.1, 0.9, boundary=_WANDSBEK_BOUNDARY, kind="bezirk")
 
         result = agent.filter("Krankenhäuser in Wandsbek", _OAF_LAYER, location)
@@ -374,6 +376,6 @@ class TestFilterAgentFilter:
 
         client = httpx.Client(transport=httpx.MockTransport(handler))
         reply = json.dumps([{"field": "betten", "operator": "gt", "value": 1}])
-        agent = FilterAgent(llm=_mock_llm(reply), http_client=client)
+        agent = FilterAgent(_AREA_TERMS, llm=_mock_llm(reply), http_client=client)
 
         assert agent.filter("query", _OAF_LAYER) is None

@@ -1,18 +1,18 @@
-"""Real implementation of ``StubDataServices``'s interface.
+"""``RealDataServices``: the ``DataServices`` the pipeline runs with.
 
-Combines ``AddressResolver`` (location -> coordinates) and
-``LayerSearchService`` (loose term -> official layer name) behind the
-same ``resolve_locations``/``resolve_layer``/``detect_action`` interface
-``AgentExecutorComponent`` already calls, so it needs no changes to use
-either implementation.
+Combines ``LocationResolver`` (place -> coordinates and outline) and
+``LayerSearchService`` (loose term -> official layer name), both fed by
+the city's data source adapters, plus ``FilterAgent`` and the analysis
+agent, behind the ``DataServices`` interface ``AgentExecutorComponent``
+calls.
 
 Layer resolution needs two LLM-assisted steps on top of
 ``LayerSearchService``'s retrieval, not just retrieval alone: text/
-embedding similarity cannot bridge colloquial German terms to Hamburg's
+embedding similarity cannot bridge colloquial German terms to a city's
 official layer names when they share no lexical overlap - e.g.
 "Fahrradstationen" scores far closer to "Fahrradluftstationen" (bike
-air-pump stations) than to the actually-correct "StadtRAD-Stationen
-Hamburg" (Hamburg's bike-sharing brand name) under both embedding
+air-pump stations) than to the actually-correct "StadtRAD-Stationen"
+(a bike-sharing brand name) under both embedding
 cosine similarity and cross-encoder reranking, and "StadtRAD" doesn't
 even make the top ~40 retrieved candidates for that query - verified
 empirically against the real layer catalog. Qwen3 already has the
@@ -33,12 +33,15 @@ import re
 from collections.abc import Collection
 from typing import Any
 
-from cwym_agent.geodata.address_resolver import AddressResolver
+import httpx
+
+from cwym_agent.city_profile import CityProfile
+from cwym_agent.geodata.adapters import build_boundary_source, build_geocoder, build_layer_catalog_source
 from cwym_agent.geodata.filter_agent import FilterAgent
 from cwym_agent.geodata.layer_search import LayerSearchService
+from cwym_agent.geodata.locations import LocationResolver
 from cwym_agent.geodata.settings import GeodataSettings
 from cwym_agent.geodata.types import (
-    HAMBURG_EXTENT,
     ActionMatch,
     AnalysisResult,
     FilterResult,
@@ -50,19 +53,6 @@ from cwym_agent.llm.qwen3_client import Qwen3Client
 
 logger = logging.getLogger(__name__)
 
-# Hamburg's own address index (api.hamburg.de/addr_search) is scoped to
-# streets/districts/boroughs *within* Hamburg - it has no single record
-# for "Hamburg" the city itself (confirmed live: searching "Hamburg" or
-# "Freie und Hansestadt Hamburg" returns only its individual boroughs,
-# e.g. "Hamburg-Mitte", "Hamburg-Nord", never a city-wide hit). Whenever
-# no more specific location is resolved (unmatched query, or the query
-# genuinely is just "Hamburg"), fall back to the city's well-known
-# center, matching what StubDataServices did for its equivalent default
-# case.
-#
-
-_DEFAULT_LOCATION = LocationMatch("Hamburg", 53.5511, 9.9937, 0.9, extent=HAMBURG_EXTENT)
-
 _ACTION_KEYWORDS: list[tuple[tuple[str, ...], str]] = [
     (("navigiere", "navigate", "fahre nach"), "Navigieren"),
     (("filter", "filtere"), "Filter"),
@@ -73,10 +63,10 @@ _DEFAULT_ACTION = "Zeigen"
 _LAYER_SELECTION_PROMPT_TEMPLATE = (
     "Du hilfst dabei, aus einer Liste von Kandidaten-Kartenebenen die am "
     "besten passende für eine Nutzeranfrage auszuwählen. Der Kontext ist "
-    "ausschließlich die Freie und Hansestadt Hamburg - bevorzuge Ebenen, "
-    "die sich auf Hamburg beziehen, gegenüber gleichnamigen Ebenen zu "
-    "anderen Bundesländern oder Regionen (z.B. Niedersachsen, "
-    "Schleswig-Holstein). Antworte NUR mit der Nummer der am besten "
+    "ausschließlich die {official_name} - bevorzuge Ebenen, "
+    "die sich auf {city} beziehen, gegenüber gleichnamigen Ebenen zu "
+    "anderen Bundesländern oder Regionen (z.B. {neighbouring_regions}). "
+    "Antworte NUR mit der Nummer der am besten "
     "passenden Ebene. Antworte mit 0, wenn keine der Ebenen wirklich "
     "passt.\n\n"
     "Anfrage: {query}\n\n"
@@ -85,11 +75,11 @@ _LAYER_SELECTION_PROMPT_TEMPLATE = (
 
 _QUERY_EXPANSION_PROMPT_TEMPLATE = (
     "Du hilfst dabei, für eine Nutzeranfrage passende Suchbegriffe für "
-    "Hamburgs offiziellen Geodaten-Katalog zu finden. Nenne bis zu 3 "
+    "{city_genitive} offiziellen Geodaten-Katalog zu finden. Nenne bis zu 3 "
     "mögliche offizielle Bezeichnungen, Markennamen oder Fachbegriffe, "
     "unter denen ein passender Datensatz dort tatsächlich geführt sein "
-    "könnte (z.B. \"StadtRAD\" für \"Fahrradstationen\", weil das "
-    "Hamburger Bike-Sharing-System offiziell so heißt). Antworte NUR mit "
+    "könnte (z.B. \"{official_term}\" für \"{term}\", weil "
+    "{official_term_reason} offiziell so heißt). Antworte NUR mit "
     "den Begriffen, kommagetrennt, ohne weitere Erklärung.\n\n"
     "Anfrage: {query}"
 )
@@ -124,23 +114,43 @@ def _parse_selection_index(reply: str, num_candidates: int) -> int | None:
 
 
 class RealDataServices:
-    """Real location/layer/action resolution, backed by Hamburg's public APIs."""
+    """Real location/layer/action resolution for the profile's city."""
 
     def __init__(
         self,
+        profile: CityProfile,
         settings: GeodataSettings | None = None,
-        address_resolver: AddressResolver | None = None,
+        locations: LocationResolver | None = None,
         layer_search: LayerSearchService | None = None,
         filter_agent: FilterAgent | None = None,
         llm: Any | None = None,
         udp_analysis: UdpAnalysisClient | None = None,
     ):
+        """The data sources are built from ``profile`` unless passed in
+        (tests pass doubles)."""
+
+        self.profile = profile
         self.settings = settings or GeodataSettings()
-        self.address_resolver = address_resolver or AddressResolver(self.settings)
-        self.layer_search = layer_search or LayerSearchService(self.settings)
+        http_client = httpx.Client(timeout=self.settings.timeout) if locations is None or layer_search is None else None
+        self.locations = locations or LocationResolver(
+            build_geocoder(profile.geocoder, self.settings, http_client),
+            build_boundary_source(profile.boundaries, self.settings, http_client),
+        )
+        self.layer_search = layer_search or LayerSearchService(
+            build_layer_catalog_source(profile.layer_catalog, self.settings, http_client), self.settings
+        )
         self.llm = llm if llm is not None else Qwen3Client()
-        self.filter_agent = filter_agent or FilterAgent(self.settings, llm=self.llm)
-        self.udp_analysis = udp_analysis or UdpAnalysisClient(self.settings)
+        self.filter_agent = filter_agent or FilterAgent(profile.prompt.area_terms, self.settings, llm=self.llm)
+        self.udp_analysis = udp_analysis or UdpAnalysisClient(profile.extent, self.settings)
+
+        # The city itself. A city's address search typically indexes only
+        # places *within* the city (found live: searching the city's name
+        # returns one of its boroughs, never a city-wide hit), so the
+        # city's own names are answered here, and the city is also the
+        # fallback when nothing more specific resolves.
+        home = profile.default_location
+        self.city_location = LocationMatch(home.name, home.lat, home.lon, 0.9, extent=profile.extent)
+        self._city_names = {n.strip().lower() for n in (profile.name, profile.official_name, home.name)}
 
     def warm_up(self) -> None:
         """Eagerly build the layer search index.
@@ -153,16 +163,11 @@ class RealDataServices:
         self.layer_search.warm_up()
 
     def resolve_locations(self, query: str) -> list[LocationMatch]:
-        # Hamburg's address index has no record for "Hamburg" the city
-        # itself (it only indexes streets/districts/boroughs *within*
-        # Hamburg), so a bare "Hamburg" query would otherwise resolve to
-        # some arbitrary borough (e.g. "Hamburg-Harburg") - handle it
-        # directly instead.
-        if query.strip().lower() == "hamburg":
-            return [_DEFAULT_LOCATION]
+        if query.strip().lower() in self._city_names:
+            return [self.city_location]
 
-        match = self.address_resolver.resolve(query)
-        return [match] if match else [_DEFAULT_LOCATION]
+        match = self.locations.resolve(query)
+        return [match] if match else [self.city_location]
 
     def resolve_layer(
         self, query: str, allowed_layer_ids: Collection[str] | None = None
@@ -211,7 +216,14 @@ class RealDataServices:
         the original query alone.
         """
 
-        prompt = _QUERY_EXPANSION_PROMPT_TEMPLATE.format(query=query)
+        example = self.profile.prompt.layer_example
+        prompt = _QUERY_EXPANSION_PROMPT_TEMPLATE.format(
+            query=query,
+            city_genitive=self.profile.prompt.city_genitive,
+            official_term=example.official_term,
+            term=example.term,
+            official_term_reason=example.official_term_reason,
+        )
 
         try:
             reply = self.llm.generate(
@@ -229,7 +241,11 @@ class RealDataServices:
             return candidates[0]
 
         prompt = _LAYER_SELECTION_PROMPT_TEMPLATE.format(
-            query=query, candidates=_format_candidates(candidates)
+            query=query,
+            candidates=_format_candidates(candidates),
+            official_name=self.profile.official_name,
+            city=self.profile.name,
+            neighbouring_regions=", ".join(self.profile.prompt.neighbouring_regions),
         )
 
         try:

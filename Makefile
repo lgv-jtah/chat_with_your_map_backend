@@ -43,7 +43,7 @@ test:
 	uv run pytest
 
 test-live:
-	CWYM_LIVE_TESTS=1 uv run pytest tests/test_qwen3_live.py tests/test_geodata_live.py
+	CWYM_LIVE_TESTS=1 uv run pytest tests/test_qwen3_live.py tests/test_geodata_live.py tests/test_multiturn_live.py
 
 clean:
 	find . -type d -name "__pycache__" -not -path "./.venv/*" -exec rm -rf {} +

@@ -17,12 +17,14 @@ purely from what this module extracts from *this* request's
 """
 
 import logging
+from collections.abc import Collection
 from typing import Literal
 
 from ag_ui.core import RunAgentInput
 from pydantic import BaseModel, ConfigDict, Field
 from pydantic.alias_generators import to_camel
 
+from cwym_agent.city_profile import LocationKind
 from cwym_agent.geodata.filter_agent import FILTER_OPERATORS
 from cwym_agent.geodata.portal_catalog_resolver import LayerCatalog
 
@@ -45,7 +47,7 @@ class Condition(_CamelModel):
 
 class Area(_CamelModel):
     name: str = Field(max_length=200)
-    kind: Literal["bezirk", "stadtteil", "address"]
+    kind: LocationKind
 
 
 class FilterSpec(_CamelModel):
@@ -93,15 +95,18 @@ def current_query(inp: RunAgentInput) -> str:
     return text
 
 
-def build_context(inp: RunAgentInput, catalog: LayerCatalog | None) -> ConversationContext:
+def build_context(
+    inp: RunAgentInput, catalog: LayerCatalog | None, location_kinds: Collection[str]
+) -> ConversationContext:
     """Validate ``inp.state``/``inp.messages`` into a trusted
     ``ConversationContext``.
 
     Raises ``pydantic.ValidationError`` (the caller turns this into an
-    HTTP 400) only for a genuine size-cap violation - unknown layer ids
-    and disallowed message roles are silently dropped and logged
-    instead, since a stale/manually-edited client id isn't a client
-    error worth rejecting the whole request over.
+    HTTP 400) only for a genuine size-cap or shape violation - unknown
+    layer ids, location kinds the city profile doesn't have
+    (``location_kinds``) and disallowed message roles are silently
+    dropped and logged instead, since a stale/manually-edited client
+    value isn't a client error worth rejecting the whole request over.
     """
 
     state = MapStateIn.model_validate(inp.state or {})
@@ -126,8 +131,17 @@ def build_context(inp: RunAgentInput, catalog: LayerCatalog | None) -> Conversat
         if bad_operators:
             logger.info("build_context: dropping filter with unrecognized operators %r", bad_operators)
             continue
+        area = filter_state.filter_spec.area
+        if area is not None and area.kind not in location_kinds:
+            # Without its area the filter would be refined city-wide.
+            logger.info("build_context: dropping filter with unknown area kind %r", area.kind)
+            continue
         valid_filters.append(filter_state)
     state.filters = valid_filters
+
+    if state.last_location is not None and state.last_location.kind not in location_kinds:
+        logger.info("build_context: dropping lastLocation with unknown kind %r", state.last_location.kind)
+        state.last_location = None
 
     dropped_roles = [m.role for m in inp.messages[:-1] if getattr(m, "role", None) not in _HISTORY_ROLES]
     if dropped_roles:

@@ -32,20 +32,26 @@ itself decides which of `location_extractor`/`layer_resolver`/
 `action_detector` (defined once in `cwym_agent.sub_agents`) are
 relevant to a given query - zero, one, or several may be called.
 
-**Data services:** real, backed by Hamburg's public APIs
-(`cwym_agent.geodata`):
+**Data services:** real, backed by the city's public APIs
+(`cwym_agent.geodata`). The city's services sit behind the interfaces in
+`geodata/interfaces.py` (`Geocoder`, `BoundarySource`,
+`LayerCatalogSource`, `DataServices`); the city profile names an adapter
+for each (`geodata/adapters`, see "City profiles"). For Hamburg:
 
-- `AddressResolver` resolves district/street names to coordinates via
-  `https://api.hamburg.de/addr_search` (public, unauthenticated). Prefers
-  district/city/county-level hits over individual streets, since a query
-  like "Wandsbek" almost always means the district, not one of the dozens
-  of "Wandsbeker ..." streets that otherwise dominate by raw
-  Elasticsearch score.
+- The `hamburg_addr_search` geocoder resolves district/street names to
+  coordinates via `https://api.hamburg.de/addr_search` (public,
+  unauthenticated). Prefers area-level hits over individual streets,
+  since a query like "Wandsbek" almost always means the district, not one
+  of the dozens of "Wandsbeker ..." streets that otherwise dominate by raw
+  Elasticsearch score. `LocationResolver` then replaces the area's
+  bounding rectangle with its official outline from the
+  `ogc_api_features` boundary source (`verwaltungsgrenzen`).
 - `LayerSearchService` does hybrid BM25 + embedding retrieval + cross-
   encoder reranking (`InMemoryDocumentStore`, `sentence-transformers/
   all-MiniLM-L6-v2`, `cross-encoder/mmarco-mMiniLMv2-L12-H384-v1`) over
-  Hamburg's ~6,500 map layers, fetched from `https://geodienste.hamburg.
-  de/layers/_search` (public, unauthenticated).
+  the city's layer catalog - for Hamburg ~6,500 map layers, fetched by the
+  `hamburg_layers_es` source from `https://geodienste.hamburg.de/layers/
+  _search` (public, unauthenticated).
 - **Important finding:** pure text/embedding similarity cannot bridge
   colloquial terms to Hamburg's official layer names when they share no
   lexical overlap - e.g. "Fahrradstationen" scores far closer to
@@ -110,7 +116,7 @@ Qwen3Settings` and `cwym_agent.geodata.settings.GeodataSettings`):
 | `CWYM_QWEN3_TIMEOUT` | `60` | Request timeout (seconds) |
 | `CWYM_QWEN3_MAX_TOKENS_PLAN` | `6144` | Max tokens for the planning call (covers the reasoning trace + tool calls) - the conversation-context block + planning rules give Qwen3 more to reason through than a bare query, and reasoning length is highly variable run to run, so this needs generous headroom |
 | `CWYM_QWEN3_MAX_TOKENS_GENERATE` | `2048` | Max tokens for the final reply generation call - the conversation-context block gives Qwen3 more to reason through before answering than a bare query, so this needs generous headroom, same rationale as `CWYM_QWEN3_MAX_TOKENS_PLAN` |
-| `CWYM_LAYER_SEARCH_URL` | `https://geodienste.hamburg.de/layers/_search` | Hamburg's public layer catalog Elasticsearch endpoint |
+| `CWYM_LAYER_SEARCH_URL` | *(profile: `layer_catalog.url`)* | Overrides the city profile's layer catalog endpoint |
 | `CWYM_LAYER_EMBED_MODEL` | `sentence-transformers/all-MiniLM-L6-v2` | Embedding model for layer search |
 | `CWYM_LAYER_RANKER_MODEL` | `cross-encoder/mmarco-mMiniLMv2-L12-H384-v1` | Cross-encoder reranker model |
 | `CWYM_LAYER_RETRIEVER_TOP_K` | `20` | Candidates pulled from each of BM25/embedding retrieval |
@@ -119,8 +125,8 @@ Qwen3Settings` and `cwym_agent.geodata.settings.GeodataSettings`):
 | `CWYM_LAYER_FETCH_RETRIES` | `5` | Retry attempts for the layer catalog fetch (this endpoint is intermittently flaky - some requests time out while others succeed in under a second) |
 | `CWYM_LAYER_FETCH_RETRY_BACKOFF` | `2` | Seconds to wait between layer catalog fetch retries |
 | `CWYM_LAYER_LLM_MAX_TOKENS` | `2048` | Token budget for the layer expansion/disambiguation LLM calls |
-| `CWYM_ADDRESS_SEARCH_URL` | `https://api.hamburg.de/addr_search` | Hamburg's public address/district search endpoint |
-| `CWYM_AREA_BOUNDARIES_URL` | `https://api.hamburg.de/datasets/v1/verwaltungsgrenzen` | Official borough/district outlines (OAF) used instead of the address search's bounding rectangles for spatial filters and drawn boundaries |
+| `CWYM_ADDRESS_SEARCH_URL` | *(profile: `geocoder.url`)* | Overrides the city profile's address/district search endpoint |
+| `CWYM_AREA_BOUNDARIES_URL` | *(profile: `boundaries.url`)* | Overrides the city profile's official area outlines (OAF), used instead of the address search's bounding rectangles for spatial filters and drawn boundaries |
 | `CWYM_ADDRESS_RESULT_SIZE` | `20` | Candidates fetched per address query (needs enough headroom to find district/county-level hits alongside street matches) |
 | `CWYM_GEODATA_TIMEOUT` | `15` | Request timeout (seconds) for both geodata endpoints |
 | `CWYM_PORTAL_CATALOG_CACHE_TTL` | `600` | Seconds `PortalCatalogResolver` trusts a fetched `config.json` before re-fetching |
@@ -148,10 +154,31 @@ layer catalog, boundary dataset, tier 2 analysis agent - lives in
 `profiles/<city>/profile.yaml`; the schema and its checks are in
 `cwym_agent.city_profile`. `profiles/hamburg/profile.yaml` is the default.
 
-The profile is loaded and validated at startup and passed into
-`build_pipeline`. For now (CHAT-3) the components still use their own
-Hamburg values; `tests/test_city_profile.py` checks that those match the
-Hamburg profile. CHAT-5 makes the components read from the profile.
+The profile is loaded and validated once at startup and passed into
+`build_pipeline`:
+
+- `RealDataServices` builds the geocoder, boundary source and layer
+  catalog source from the adapters the profile names
+  (`cwym_agent.geodata.adapters`). The endpoint URLs come from the
+  profile; `CWYM_ADDRESS_SEARCH_URL`, `CWYM_AREA_BOUNDARIES_URL` and
+  `CWYM_LAYER_SEARCH_URL` override them.
+- The city's own names (`name`, `official_name`) resolve to
+  `default_location` with the city `extent`, which is also the fallback
+  when no place is found and the zoom limit for UDP result layers.
+- Location kinds (`bezirk`, `stadtteil`, ...) are the values of
+  `geocoder.place_types`; client state with other kinds is dropped.
+- Prompts and tool descriptions are templates worded with the `prompt`
+  section (city genitive, area terms, example places and layer,
+  neighbouring regions); `analysis_agent.example_question` goes into the
+  `udp_analysis` tool, which is only offered when `analysis_agent` is set.
+
+A new city needs a profile and, where its services differ from existing
+adapters, an adapter module plus its name in the profile schema.
+Nothing city-specific may live elsewhere in `src/` -
+`tests/test_no_city_in_core.py` fails on Hamburg outside its adapters,
+and `tests/test_prompt_snapshots.py` keeps Hamburg's rendered prompts
+byte-identical (`CWYM_UPDATE_SNAPSHOTS=1` regenerates them after an
+intended change).
 Endpoint environment variables (`CWYM_*_URL`) keep overriding.
 
 In Docker the profiles are copied to `/app/profiles`; mount a directory
@@ -343,8 +370,9 @@ uv run pytest
 Fast/deterministic by default - the pipeline/API tests
 (`test_api.py`) run against `StubQwen3Generator`/`StubDataServices` via
 a FastAPI dependency override, and `test_qwen3_client.py`/
-`test_address_resolver.py`/`test_layer_search.py`/
-`test_real_data_services.py` mock the HTTP layer directly, so no
+`test_hamburg_addr_search.py`/`test_hamburg_layers_es.py`/
+`test_ogc_api_features_boundaries.py`/`test_real_data_services.py`
+mock the HTTP layer directly, so no
 network access or model downloads are required.
 
 To additionally run the opt-in end-to-end tests against the real
@@ -353,5 +381,5 @@ access, and takes a few minutes for `test_geodata_live.py` since it
 builds the full layer index):
 
 ```bash
-CWYM_LIVE_TESTS=1 uv run pytest tests/test_qwen3_live.py tests/test_geodata_live.py
+CWYM_LIVE_TESTS=1 uv run pytest tests/test_qwen3_live.py tests/test_geodata_live.py tests/test_multiturn_live.py
 ```

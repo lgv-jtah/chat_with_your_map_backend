@@ -8,19 +8,6 @@ needing to know which implementation is in use.
 
 from dataclasses import dataclass, field
 
-# HAMBURG_EXTENT is chat_with_your_map_portal/config.json's own
-# portalConfig.map.mapView.extent - [510000.0, 5850000.0, 625000.4,
-# 6000000.0] in EPSG:25832 - converted to WGS84 via pyproj
-# (Transformer.from_crs("EPSG:25832", "EPSG:4326", always_xy=True)),
-# not a from-scratch guess: reuses the portal author's own already-
-# vetted "sensible whole-region view", not a data-derived union of
-# Hamburg's boroughs (which would technically be more "correct" but
-# includes far-flung exclaves like Neuwerk, an island in the North Sea
-# that's administratively part of Hamburg-Mitte - zooming out that far
-# would make the actual urban area look tiny, the opposite of what a
-# "show me Hamburg" default should look like).
-HAMBURG_EXTENT = (9.148322816744086, 52.79970456940332, 10.913170524761878, 54.13290152266379)
-
 
 @dataclass
 class LocationMatch:
@@ -36,28 +23,38 @@ class LocationMatch:
     """WGS84 bounding box (minLon, minLat, maxLon, maxLat) to fit the map
     view to (ZOOM_TO_EXTENT), distinct from `boundary` (which drives
     DRAW_BOUNDARY's outline) - set whenever there's a sensible area to
-    zoom to: derived from `boundary` when one exists, or a hardcoded
-    region extent for a location (like the Hamburg-wide fallback) that
-    has no real boundary geometry to derive one from."""
+    zoom to: derived from `boundary` when one exists, or the city
+    profile's extent for the city itself, which has no boundary geometry
+    to derive one from."""
     kind: str | None = None
-    """"bezirk" | "stadtteil" | "address", or None when the resolved hit
-    is street-level or otherwise doesn't fit one of those (matches the
-    MapCommand schema's Area/NamedLocation `kind` enum). Lets a location
-    travel by name+kind for later re-resolution (conversation context,
+    """One of the city profile's location kinds (the values of
+    ``geocoder.place_types``, e.g. "stadtteil"), or None when the resolved
+    hit is street-level or otherwise none of them. Lets a location travel
+    by name+kind for later re-resolution (conversation context,
     cwym-agent-architecture.md Section 10) without trusting client-
-    supplied geometry. Derived from Hamburg's own address index `type`
-    field - verified live (ImplementationLog.md): `"county"` is Bezirk
-    (e.g. "Altona", "Hamburg-Harburg"), `"district"` is Stadtteil (e.g.
-    "Altona-Altstadt", "Ottensen", "Eppendorf" - including a Stadtteil
-    that shares its Bezirk's exact name, like "Eimsbüttel"), `"address"`
-    is address. `"state"`/`"city"` (also in `_BROAD_TYPES`) have no
-    observed hits in Hamburg's index and no clean equivalent here, so
-    they map to None rather than a guessed value."""
+    supplied geometry. The geocoder adapter maps its service's own place
+    types to these kinds."""
     alternatives: list[str] = field(default_factory=list)
     """Other areas the query could equally mean, e.g. "Hoheluft" ->
     this match is "Hoheluft-Ost", alternatives ["Hoheluft-West"]. Non-empty
     means the place is ambiguous: no map commands are built and the answer
     asks the user which one they mean."""
+
+
+def bbox_of(geometry: dict) -> tuple[float, float, float, float]:
+    """WGS84 (minLon, minLat, maxLon, maxLat) covering a GeoJSON
+    Polygon/MultiPolygon - for ZOOM_TO_EXTENT, alongside the geometry
+    itself (which DRAW_BOUNDARY outlines directly)."""
+
+    def points(coords):
+        if isinstance(coords[0], (int, float)):
+            yield coords
+            return
+        for item in coords:
+            yield from points(item)
+
+    lons, lats = zip(*points(geometry["coordinates"]))
+    return min(lons), min(lats), max(lons), max(lats)
 
 
 @dataclass
@@ -67,17 +64,17 @@ class LayerMatch:
     confidence: float
     description: str = ""
     typ: str | None = None
-    """The service type Hamburg's catalog reports (e.g. "OAF", "WMS",
+    """The service type the layer catalog reports (e.g. "OAF", "WMS",
     "WFS", "SensorThings") - FilterAgent only operates on "OAF" layers
     (see cwym-agent-architecture.md Section 9)."""
     url: str | None = None
-    """The service's API root, e.g. "https://api.hamburg.de/datasets/v1/
+    """The service's API root, e.g. "https://example.org/datasets/v1/
     stadtrad" for an OAF layer - FilterAgent builds
     f"{url}/collections/{collection}/items" from this."""
     collection: str | None = None
     """The OGC API Features collection id (only set for typ == "OAF"),
-    e.g. "stadtrad_stationen" - distinct from layer_id, which is
-    Hamburg's own catalog id."""
+    e.g. "stadtrad_stationen" - distinct from layer_id, which is the
+    layer catalog's own id."""
     feature_type: str | None = None
     """The WFS feature type name without prefix (only for typ == "WFS"),
     e.g. "staatliche_schulen" - services.json's ``featureType``.

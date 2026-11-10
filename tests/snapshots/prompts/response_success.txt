@@ -1,0 +1,17 @@
+## Aktueller Kartenzustand
+Aktive Ebenen:
+- Schulen (ID 1732)
+- StadtRAD-Stationen (ID 27764)
+Aktive Filter:
+- StadtRAD-Stationen (ID 27764): anzahl_raeder gte "10"; Gebiet: Wandsbek (bezirk)
+Zuletzt angezeigter Ort: Eppendorf (stadtteil)
+
+## Bisheriger Gesprächsverlauf (älteste zuerst)
+Nutzer: Zeig mir Fahrradstationen in Wandsbek
+Assistent: Ich zeige dir die StadtRAD-Stationen in Wandsbek.
+
+Beziehe dich bei einer Folgefrage auf das bereits Gezeigte (z. B. "von den angezeigten Schulen ...") statt es als etwas komplett Neues zu beschreiben.
+
+Nutzeranfrage: "Zeig mir Fahrradstationen in Wandsbek"
+Aufgelöste Informationen: Ort: Wandsbek; Kartenebene: StadtRAD-Stationen; Aktion: Zeigen; Gefilterte Ergebnisse: 12 Treffer
+Formuliere eine kurze, natürliche deutsche Antwort, die dem Nutzer mitteilt, was auf der Karte angezeigt wird.

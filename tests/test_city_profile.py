@@ -135,6 +135,7 @@ def test_id_must_match_directory(tmp_path, monkeypatch):
         (lambda d: d["boundaries"]["collections"].update(ortsteil={"collection": "x", "name_field": "y"}),
          "['ortsteil']"),
         (lambda d: d.update(analysis_agent={"adapter": "magic"}), "analysis_agent.adapter"),
+        (lambda d: d["geocoder"]["place_types"].update(county="Bezirk"), "geocoder.place_types.county"),
     ],
 )
 def test_invalid_values_name_the_field(tmp_path, monkeypatch, mutate, expected):
@@ -154,35 +155,6 @@ def test_profile_is_immutable():
     profile = load_profile()
     with pytest.raises(Exception):
         profile.name = "Altona"  # type: ignore[misc]
-
-
-# --- Hamburg profile == values still hard-coded (until CHAT-5) --------------
-
-
-def test_hamburg_profile_matches_hardcoded_values(monkeypatch):
-    """CHAT-3 only introduces the profile; the code still uses its own
-    constants. Fail if the two drift apart before CHAT-5 wires them up."""
-
-    from cwym_agent.geodata import address_resolver, area_boundaries, real_data_services
-    from cwym_agent.geodata.settings import GeodataSettings
-    from cwym_agent.geodata.types import HAMBURG_EXTENT
-
-    for var in ("CWYM_LAYER_SEARCH_URL", "CWYM_ADDRESS_SEARCH_URL", "CWYM_AREA_BOUNDARIES_URL"):
-        monkeypatch.delenv(var, raising=False)
-    settings = GeodataSettings()
-    p = load_profile("hamburg")
-
-    assert p.extent == HAMBURG_EXTENT
-    default = real_data_services._DEFAULT_LOCATION
-    assert (p.default_location.name, p.default_location.lat, p.default_location.lon) == (
-        default.name, default.latitude, default.longitude,
-    )
-    assert p.geocoder.url == settings.address_search_url
-    assert set(p.geocoder.broad_types) == set(address_resolver._BROAD_TYPES)
-    assert p.geocoder.place_types == address_resolver._KIND_BY_TYPE
-    assert p.layer_catalog.url == settings.layer_search_url
-    assert p.boundaries.url == settings.area_boundaries_url
-    assert {k: (c.collection, c.name_field) for k, c in p.boundaries.collections.items()} == area_boundaries._COLLECTIONS
 
 
 # --- pipeline wiring -------------------------------------------------------
@@ -226,6 +198,7 @@ def test_startup_aborts_on_invalid_profile(monkeypatch, tmp_path, caplog):
     monkeypatch.setenv("CWYM_PROFILES_DIR", str(tmp_path))
     monkeypatch.setenv("CWYM_CITY_PROFILE", "missing")
     main.get_pipeline.cache_clear()
+    main.get_city_profile.cache_clear()
     monkeypatch.setattr(main, "get_pipeline", lambda: pytest.fail("warm-up must not start"))
 
     async def run_lifespan():
@@ -241,6 +214,7 @@ def test_startup_aborts_on_invalid_profile(monkeypatch, tmp_path, caplog):
     finally:
         monkeypatch.undo()
         main.get_pipeline.cache_clear()
+        main.get_city_profile.cache_clear()
 
 
 def test_profiles_dir_env(monkeypatch, tmp_path):

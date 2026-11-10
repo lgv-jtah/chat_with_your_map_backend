@@ -7,6 +7,7 @@ import pytest
 from ag_ui.core import AssistantMessage, RunAgentInput, SystemMessage, UserMessage
 from pydantic import ValidationError
 
+from cwym_agent.city_profile import load_profile
 from cwym_agent.geodata.conversation_context import (
     ConversationContext,
     MapStateIn,
@@ -28,6 +29,9 @@ def _run_input(*, state=None, messages, forwarded_props=None) -> RunAgentInput:
         context=[],
         forwarded_props=forwarded_props or {},
     )
+
+
+_KINDS = load_profile("hamburg").location_kinds
 
 
 def _catalog(*ids_and_names: tuple[str, str]) -> LayerCatalog:
@@ -55,7 +59,7 @@ class TestBuildContext:
     def test_empty_state_and_no_history_yields_empty_context(self):
         inp = _run_input(messages=[UserMessage(id="1", content="Schulen?")])
 
-        ctx = build_context(inp, catalog=None)
+        ctx = build_context(inp, catalog=None, location_kinds=_KINDS)
 
         assert ctx.map_state.active_layer_ids == []
         assert ctx.map_state.filters == []
@@ -68,7 +72,7 @@ class TestBuildContext:
         )
         catalog = _catalog(("1732", "Schulen Hamburg"))
 
-        ctx = build_context(inp, catalog)
+        ctx = build_context(inp, catalog, _KINDS)
 
         assert ctx.map_state.active_layer_ids == ["1732"]
 
@@ -82,7 +86,7 @@ class TestBuildContext:
             messages=[UserMessage(id="1", content="Nur die Gymnasien")],
         )
 
-        ctx = build_context(inp, catalog=None)
+        ctx = build_context(inp, catalog=None, location_kinds=_KINDS)
 
         assert ctx.map_state.active_layer_ids == []
 
@@ -97,7 +101,7 @@ class TestBuildContext:
         )
         catalog = _catalog(("1732", "Schulen Hamburg"))
 
-        ctx = build_context(inp, catalog)
+        ctx = build_context(inp, catalog, _KINDS)
 
         assert ctx.map_state.filters == []
 
@@ -112,7 +116,7 @@ class TestBuildContext:
         )
         catalog = _catalog(("1732", "Schulen Hamburg"))
 
-        ctx = build_context(inp, catalog)
+        ctx = build_context(inp, catalog, _KINDS)
 
         assert ctx.map_state.filters == []
 
@@ -133,10 +137,40 @@ class TestBuildContext:
         )
         catalog = _catalog(("1732", "Schulen Hamburg"))
 
-        ctx = build_context(inp, catalog)
+        ctx = build_context(inp, catalog, _KINDS)
 
         assert len(ctx.map_state.filters) == 1
         assert ctx.map_state.filters[0].filter_spec.area.name == "Wandsbek"
+
+    def test_filter_with_unknown_area_kind_is_dropped(self):
+        inp = _run_input(
+            state={
+                "filters": [
+                    {
+                        "layerId": "1732",
+                        "filterSpec": {"conditions": [], "area": {"name": "Milbertshofen", "kind": "stadtbezirk"}},
+                    }
+                ]
+            },
+            messages=[UserMessage(id="1", content="query")],
+        )
+
+        ctx = build_context(inp, _catalog(("1732", "Schulen Hamburg")), _KINDS)
+
+        assert ctx.map_state.filters == []
+
+    def test_last_location_kinds_are_checked_against_the_profile(self):
+        def last_location(kind: str):
+            inp = _run_input(
+                state={"lastLocation": {"name": "Eppendorf", "kind": kind}},
+                messages=[UserMessage(id="1", content="query")],
+            )
+            return build_context(inp, catalog=None, location_kinds=_KINDS).map_state.last_location
+
+        assert last_location("stadtteil").name == "Eppendorf"
+        assert last_location("stadtbezirk") is None
+        with pytest.raises(ValidationError):
+            last_location("Not A Kind!")
 
     def test_size_cap_violation_raises(self):
         inp = _run_input(
@@ -145,7 +179,7 @@ class TestBuildContext:
         )
 
         with pytest.raises(ValidationError):
-            build_context(inp, catalog=None)
+            build_context(inp, catalog=None, location_kinds=_KINDS)
 
     def test_only_user_and_assistant_roles_kept_as_history(self):
         inp = _run_input(
@@ -157,7 +191,7 @@ class TestBuildContext:
             ],
         )
 
-        ctx = build_context(inp, catalog=None)
+        ctx = build_context(inp, catalog=None, location_kinds=_KINDS)
 
         assert ctx.history == [
             ("user", "Wo finde ich Schulen?"),
@@ -172,7 +206,7 @@ class TestBuildContext:
         messages.append(UserMessage(id="last", content="x" * 600))
         inp = _run_input(messages=messages)
 
-        ctx = build_context(inp, catalog=None)
+        ctx = build_context(inp, catalog=None, location_kinds=_KINDS)
 
         assert len(ctx.history) == 6  # last 3 turns = 6 messages
         assert ctx.history[0] == ("user", "Frage 2")

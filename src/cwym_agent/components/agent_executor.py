@@ -11,15 +11,13 @@ provided.
 import logging
 import time
 from dataclasses import asdict, is_dataclass, replace
-from typing import Any
-
 from haystack import component
 
 from cwym_agent import observability
 from cwym_agent.bridge import AGUIEventBridge
 from cwym_agent.geodata.conversation_context import ConversationContext
 from cwym_agent.geodata.portal_catalog_resolver import LayerCatalog
-from cwym_agent.geodata.real_data_services import RealDataServices
+from cwym_agent.geodata.interfaces import DataServices
 from cwym_agent.geodata.types import FilterCondition, LayerMatch
 
 logger = logging.getLogger(__name__)
@@ -124,8 +122,8 @@ def _with_portal_details(layer: LayerMatch, portal_layer: LayerMatch | None) -> 
 
 @component
 class AgentExecutorComponent:
-    def __init__(self, data_services: Any | None = None):
-        self.data_services = data_services if data_services is not None else RealDataServices()
+    def __init__(self, data_services: DataServices):
+        self.data_services = data_services
 
     @component.output_types(execution_log=list)
     def run(
@@ -248,8 +246,8 @@ class AgentExecutorComponent:
             return self.data_services.resolve_locations(query)
         if agent_name == "layer_resolver":
             # A layer the portal itself names exactly like the query wins
-            # before the central search - which only knows Hamburg's
-            # catalog ids and can't find a portal-only variant such as
+            # before the central search - which only knows the city
+            # catalog's ids and can't find a portal-only variant such as
             # "Grundschulen" (8712.1 = the schools WFS 8712 with a filter).
             portal_match = layer_catalog.match_name(query) if layer_catalog is not None else None
             if portal_match is not None:

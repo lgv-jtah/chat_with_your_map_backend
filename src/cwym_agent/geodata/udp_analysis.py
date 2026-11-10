@@ -2,7 +2,7 @@
 
 The UDP agent is a separate, independently deployed Haystack pipeline
 (``udp-chatbot`` repo, self-hosted Hayhooks) that answers analytical
-questions about Hamburg's Urban Data Platform: counts, areas, nearest
+questions about the Urban Data Platform's data: counts, areas, nearest
 features, comparisons. CWYM calls it as its slowest sub-agent, only for
 questions its own show/filter/navigate tools can't answer.
 
@@ -22,7 +22,9 @@ import logging
 import httpx
 
 from cwym_agent.geodata.settings import GeodataSettings
-from cwym_agent.geodata.types import HAMBURG_EXTENT, AnalysisResult, ResultLayer
+from cwym_agent.geodata.types import AnalysisResult, ResultLayer
+
+Extent = tuple[float, float, float, float]
 
 logger = logging.getLogger(__name__)
 
@@ -51,13 +53,13 @@ def _positions(coordinates):
         yield from _positions(item)
 
 
-def _bbox_within(feature_list: list, extent: tuple[float, float, float, float]):
+def _bbox_within(feature_list: list, extent: Extent):
     """The layer's bbox, computed from its own coordinates rather than
     trusting the UDP agent's ``bbox`` field - and only from positions
-    inside ``extent``. Found live: Hamburg's StadtRAD dataset has a
+    inside ``extent`` (the city's). Found live: the StadtRAD dataset has a
     station at [0, 0] ("Bahnhof Dammtor"), so a buffer-around-stations
     analysis published a polygon at Null Island and the union bbox ran
-    from the Gulf of Guinea to Hamburg - ZOOM_TO_EXTENT then left the
+    from the Gulf of Guinea to the city - ZOOM_TO_EXTENT then left the
     map showing nothing useful. Out-of-extent geometry is still drawn,
     it just doesn't drive the zoom."""
 
@@ -81,7 +83,7 @@ def _bbox_within(feature_list: list, extent: tuple[float, float, float, float]):
     return (min(xs), min(ys), max(xs), max(ys))
 
 
-def _parse_layer(key: str, raw) -> ResultLayer | None:
+def _parse_layer(key: str, raw, extent: Extent) -> ResultLayer | None:
     if not isinstance(raw, dict):
         return None
     features = raw.get("features")
@@ -91,7 +93,7 @@ def _parse_layer(key: str, raw) -> ResultLayer | None:
     if not isinstance(feature_list, list) or not feature_list:
         return None
 
-    bbox = _bbox_within(feature_list, HAMBURG_EXTENT)
+    bbox = _bbox_within(feature_list, extent)
     role = raw.get("role") if raw.get("role") in _ROLES else "result"
     return ResultLayer(
         key=str(key),
@@ -149,7 +151,7 @@ def _contains_any(polygons: list, points: list[tuple[float, float]]) -> bool:
     return False
 
 
-def _filter_context_layers(layers: list[ResultLayer]) -> list[ResultLayer]:
+def _filter_context_layers(layers: list[ResultLayer], extent: Extent) -> list[ResultLayer]:
     """Drop context-layer polygons that contain none of the result
     features - a safety net for proximity questions. Found live: despite
     the UDP prompt's rule to publish only matched reference features, a
@@ -209,16 +211,19 @@ def _filter_context_layers(layers: list[ResultLayer]) -> list[ResultLayer]:
                 features={**layer.features, "features": kept},
                 feature_count=len(kept),
                 total_features=len(kept),
-                bbox=_bbox_within(kept, HAMBURG_EXTENT),
+                bbox=_bbox_within(kept, extent),
             )
         )
     return filtered
 
 
-def parse_response(data) -> AnalysisResult:
+def parse_response(data, extent: Extent) -> AnalysisResult:
     """Hayhooks wraps ``run_api_async``'s return value under ``result``.
     A plain-string result means a UDP deployment without map-layer
-    support - still a valid answer, just nothing to draw."""
+    support - still a valid answer, just nothing to draw.
+
+    :param extent: the city's WGS84 extent; only geometry inside it
+        drives a layer's zoom ``bbox``."""
 
     result = data.get("result") if isinstance(data, dict) else None
     if isinstance(result, str):
@@ -230,16 +235,21 @@ def parse_response(data) -> AnalysisResult:
     raw_layers = result.get("map_layers") or {}
     if isinstance(raw_layers, dict):
         for key, raw in raw_layers.items():
-            layer = _parse_layer(key, raw)
+            layer = _parse_layer(key, raw, extent)
             if layer is None:
                 logger.info("udp_analysis: dropping malformed or empty map layer %r", key)
                 continue
             layers.append(layer)
-    return AnalysisResult(answer=result["answer"], layers=_filter_context_layers(layers))
+    return AnalysisResult(answer=result["answer"], layers=_filter_context_layers(layers, extent))
 
 
 class UdpAnalysisClient:
-    def __init__(self, settings: GeodataSettings | None = None, http_client: httpx.Client | None = None):
+    def __init__(
+        self, extent: Extent, settings: GeodataSettings | None = None, http_client: httpx.Client | None = None
+    ):
+        """:param extent: the city's WGS84 extent (profile ``extent``)."""
+
+        self.extent = extent
         self.settings = settings or GeodataSettings()
         self._client = http_client or httpx.Client(timeout=self.settings.udp_agent_timeout)
         self._endpoint = (
@@ -255,7 +265,7 @@ class UdpAnalysisClient:
                 data={"query": format_history_and_query(query, recent), "include_map_layers": "true"},
             )
             response.raise_for_status()
-            result = parse_response(response.json())
+            result = parse_response(response.json(), self.extent)
         except (httpx.HTTPError, ValueError) as exc:
             logger.warning("udp_analysis: UDP agent request failed (%s)", exc)
             return AnalysisResult(answer=None, error=str(exc) or type(exc).__name__)

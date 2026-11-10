@@ -1,8 +1,10 @@
-"""Stub data services.
+"""Stub data services - a Hamburg test fixture.
 
 Fakes the vector search over Hamburg's ~7,000 geodata layers and the
 geodata/urban-data-platform API for location resolution, so the pipeline
-shape can be built and tested before those real services are wired in.
+shape can be tested without network access. The canned data is Hamburg's
+(matching the Hamburg profile, the default); the core's no-city rule
+(tests/test_no_city_in_core.py) exempts this package for that reason.
 
 The demo data intentionally mirrors the mock responses that already exist
 in the ``chatWithYourMap`` Masterportal addon frontend

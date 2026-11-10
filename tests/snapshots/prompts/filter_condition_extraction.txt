@@ -1,0 +1,8 @@
+Du hilfst dabei, aus einer deutschen Filteranfrage strukturierte Bedingungen für eine Datenabfrage zu extrahieren. Verfügbare Felder der Kartenebene:
+- name (string)
+- anzahl_betten (integer)
+- traeger (string) - Beispielwerte: öffentlich, freigemeinnützig, privat
+
+Anfrage: "Krankenhäuser in Wandsbek mit mehr als 100 Betten"
+
+Antworte NUR mit einem JSON-Array von Bedingungen der Form {"field": <Feldname>, "operator": <eq|ne|lt|lte|gt|gte|contains>, "value": <Wert>}. Verwende NUR Felder aus der obigen Liste. Sind zu einem Feld Beispielwerte angegeben, verwende den passenden Wert genau so geschrieben. Ein Ortsname (Stadtteil, Bezirk) ist KEINE Attributbedingung - die räumliche Einschränkung erfolgt separat. Wenn die Anfrage keine konkrete Attributbedingung nennt (z.B. nur einen Ort), antworte mit einem leeren Array: []

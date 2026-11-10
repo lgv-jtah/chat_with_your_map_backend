@@ -47,8 +47,8 @@ the map.
 the frontend executes each command as it arrives with no batching
 (Section 3), and ``NAVIGATE_TO_LOCATION``'s own client-side zoom
 default is tuned for a single point/address, not an area the size of a
-district or a whole city - found live: navigating to "Hamburg" with no
-explicit zoom left the map zoomed in on the city center, needing a
+district or a whole city - found live: navigating to the city itself
+with no explicit zoom left the map zoomed in on the city center, needing a
 manual zoom-out to see the city. ``ZOOM_TO_EXTENT`` fits the view to
 ``LocationMatch.extent`` right after, overriding that default with a
 properly city/district-scaled view, while ``NAVIGATE_TO_LOCATION``
@@ -116,7 +116,7 @@ _TOOL_KEYWORDS: list[tuple[tuple[str, ...], str]] = [
 ]
 
 
-# ~1 km in Hamburg - a lone point result would otherwise have a
+# ~1 km at mid latitudes - a lone point result would otherwise have a
 # zero-size extent and ZOOM_TO_EXTENT would zoom in as far as it can.
 _MIN_EXTENT_SPAN_DEG = 0.01
 

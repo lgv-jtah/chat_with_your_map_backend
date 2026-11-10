@@ -21,10 +21,10 @@ deliberate, not an oversight.
 ``ZOOM_TO_EXTENT`` fires alongside ``NAVIGATE_TO_LOCATION`` whenever a
 resolved location has a sensible area to fit the view to
 (``LocationMatch.extent`` - derived from a real address-search
-boundary, or a hardcoded region extent for a location with none, like
-the Hamburg-wide fallback) - found live: without it, navigating to
-"Hamburg" left the map zoomed in on the city center at a zoom level
-tuned for a single address, not a whole city.
+boundary, or the profile's extent for the city itself, which has none)
+- found live: without it, navigating to the city itself left the map zoomed in
+on the city center at a zoom level tuned for a single address, not a
+whole city.
 
 ``APPLY_FILTER``'s payload carries the actual matched GeoJSON features
 from ``FilterAgent``'s OGC API Features query as an ad-hoc overlay -
@@ -51,6 +51,8 @@ from typing import Annotated, Any, Literal, Union
 from pydantic import BaseModel, ConfigDict, Field
 from pydantic.alias_generators import to_camel
 
+from cwym_agent.city_profile import LocationKind
+
 
 class _CamelModel(BaseModel):
     model_config = ConfigDict(alias_generator=to_camel, populate_by_name=True)
@@ -70,7 +72,7 @@ class Coordinates(_CamelModel):
 class NamedLocation(_CamelModel):
     name: str
     coordinates: Coordinates
-    kind: Literal["bezirk", "stadtteil", "address"] | None = None
+    kind: LocationKind | None = None
     """Lets the frontend record `lastLocation` (Section 10.3) for a
     single-location NAVIGATE_TO_LOCATION without guessing - absent for
     a resolved hit with no kind (e.g. a street-level match)."""
@@ -107,7 +109,7 @@ class DrawBoundaryPayload(_CamelModel):
     geometry: dict
     style: Literal["highlight", "outline"] = "outline"
     label: str | None = None
-    kind: Literal["bezirk", "stadtteil", "address"] | None = None
+    kind: LocationKind | None = None
     """Lets the frontend record `lastLocation` (Section 10.3) alongside
     `label` without guessing."""
 
@@ -129,7 +131,7 @@ class FilterConditionPayload(_CamelModel):
 
 class FilterAreaPayload(_CamelModel):
     name: str
-    kind: Literal["bezirk", "stadtteil", "address"]
+    kind: LocationKind
 
 
 class FilterSpecPayload(_CamelModel):

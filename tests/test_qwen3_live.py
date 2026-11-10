@@ -11,6 +11,8 @@ import os
 
 import pytest
 
+from cwym_agent.city_profile import load_profile
+from cwym_agent.components.master_agent import plan_request
 from cwym_agent.llm.qwen3_client import Qwen3Client
 from cwym_agent.settings import Qwen3Settings
 
@@ -30,13 +32,16 @@ def test_plan_resolves_location_and_layer_tools(client: Qwen3Client):
 
     result = client.plan(
         "Zeige mir Fahrradstationen in Altona",
+        **plan_request(load_profile("hamburg")),
         streaming_callback=lambda chunk: reasoning_chunks.append(chunk.content),
     )
 
     assert "".join(reasoning_chunks).strip() != ""
     agent_names = {step["agent_name"] for step in result["steps"]}
     assert agent_names, "expected at least one sub-agent to be called"
-    assert agent_names <= {"location_extractor", "layer_resolver", "action_detector"}
+    # "<layer> in <area>" may also plan filter_agent - its tool description
+    # asks for exactly that ("Schulen in Wandsbek").
+    assert agent_names <= {"location_extractor", "layer_resolver", "action_detector", "filter_agent"}
 
 
 def test_generate_produces_non_empty_german_text(client: Qwen3Client):

@@ -11,11 +11,11 @@ The profile is validated strictly when it's loaded, so a typo or a missing
 value stops startup with a message naming the file and the field, instead
 of surfacing as a wrong answer at query time.
 
-CHAT-3 scope: the profile is loaded, validated and passed into
-``build_pipeline``; the components don't read from it yet (CHAT-5 moves
-the Hamburg-specific code behind interfaces fed by it). Until then
-``tests/test_city_profile.py`` checks that the Hamburg profile matches the
-values still hard-coded in the code, so the two can't drift apart.
+The data sources are built from the profile by
+``cwym_agent.geodata.adapters`` (each section names its adapter), and the
+prompts and tool descriptions are worded with its ``prompt`` section.
+Nothing city-specific lives outside the profiles and the city's adapters
+(``tests/test_no_city_in_core.py``).
 """
 
 from __future__ import annotations
@@ -55,6 +55,13 @@ def _http_url(value: str) -> str:
 
 HttpUrlStr = Annotated[str, AfterValidator(_http_url)]
 
+LocationKind = Annotated[str, Field(pattern=r"^[a-z][a-z0-9_]*$", max_length=40)]
+"""A CWYM location kind: a city's own name for a kind of place (e.g.
+stadtteil, address). The profile defines them (values of
+``geocoder.place_types``); they travel to the frontend in map commands
+and come back in the client state (``lastLocation``, ``filterSpec.area``),
+and the planner sees them in its context block."""
+
 
 class DefaultLocation(_Strict):
     """Where 'the city' itself points to (the address search usually has no
@@ -72,7 +79,7 @@ class GeocoderConfig(_Strict):
     # street hits for a bare place name).
     broad_types: list[str] = Field(min_length=1)
     # Raw place type -> CWYM location kind (e.g. county -> bezirk).
-    place_types: dict[str, str] = Field(min_length=1)
+    place_types: dict[str, LocationKind] = Field(min_length=1)
 
 
 class LayerCatalogConfig(_Strict):
@@ -88,11 +95,11 @@ class BoundaryCollection(_Strict):
 class BoundariesConfig(_Strict):
     adapter: Literal["ogc_api_features"]
     url: HttpUrlStr
-    # Prefixes the address search puts on some area names that the
-    # boundary dataset doesn't have ("Hamburg-Harburg" -> "Harburg").
+    # Prefixes the geocoder puts on some area names that the boundary
+    # dataset doesn't have (e.g. "<City>-North" -> "North").
     strip_name_prefixes: list[str] = Field(default_factory=list)
     # CWYM location kind -> collection holding its official outlines.
-    collections: dict[str, BoundaryCollection] = Field(min_length=1)
+    collections: dict[LocationKind, BoundaryCollection] = Field(min_length=1)
 
 
 class AnalysisAgentConfig(_Strict):
@@ -100,12 +107,47 @@ class AnalysisAgentConfig(_Strict):
     environment variables (CWYM_UDP_AGENT_*), they differ per environment."""
 
     adapter: Literal["udp"]
+    example_question: str = Field(min_length=1)
+    """An analytical question about this city's data, shown to the planner
+    in the tool description."""
+
+
+class LayerExample(_Strict):
+    """A colloquial term whose official layer has a different name - the
+    example that teaches the planner and the layer search's query
+    expansion what to do."""
+
+    term: str = Field(min_length=1)
+    """What a user says, e.g. "Fahrradstationen"."""
+    layer_name: str = Field(min_length=1)
+    """The official layer name, e.g. "StadtRAD-Stationen"."""
+    official_term: str = Field(min_length=1)
+    """The official term to search for, e.g. "StadtRAD"."""
+    official_term_reason: str = Field(min_length=1)
+    """Completes "weil ... offiziell so heißt", e.g. "das städtische
+    Bike-Sharing-System"."""
+
+
+class PromptConfig(_Strict):
+    """City-specific wording in the prompts and tool descriptions (German)."""
+
+    city_genitive: str = Field(min_length=1)
+    """e.g. "Münchens" ("Münchens Geodaten-Katalog")."""
+    area_terms: list[str] = Field(min_length=1)
+    """Words for the city's areas, most common first, e.g. ["Stadtteil",
+    "Bezirk"]."""
+    example_places: list[str] = Field(min_length=2)
+    """Place names for examples, e.g. ["Wandsbek", "Altona"]."""
+    neighbouring_regions: list[str] = Field(min_length=1)
+    """Regions whose same-named layers the layer selection must not
+    prefer, e.g. ["Niedersachsen", "Schleswig-Holstein"]."""
+    layer_example: LayerExample
 
 
 class CityProfile(_Strict):
     id: str = Field(pattern=r"^[a-z][a-z0-9_-]*$")
     name: str = Field(min_length=1)
-    """Short city name used in prompts and replies, e.g. "Hamburg"."""
+    """Short city name used in prompts and replies, e.g. "München"."""
     official_name: str = Field(min_length=1)
     languages: list[str] = Field(min_length=1)
     """Supported answer languages, ISO 639-1; the first is the default."""
@@ -115,6 +157,7 @@ class CityProfile(_Strict):
     geocoder: GeocoderConfig
     layer_catalog: LayerCatalogConfig
     boundaries: BoundariesConfig
+    prompt: PromptConfig
     analysis_agent: AnalysisAgentConfig | None = None
     """None: the city has no tier 2 analysis agent."""
 

@@ -148,7 +148,7 @@ logged on the backend and the request runs unscoped.
 |---|---|---|
 | `activeLayerIds` | `string[]` (max 50) | Thematic layer ids currently visible on the map. Read them **live from the map** on every request, because the user can toggle layers by hand. Leave out layers the frontend created itself (the filter/analysis result layers, draw or import layers) - the backend doesn't know them. |
 | `filters` | `{layerId, filterSpec}[]` (max 10) | One entry per active `APPLY_FILTER` overlay: the `filterSpec` exactly as it arrived in that command. Echo it back unchanged; never construct it yourself. |
-| `lastLocation` | `{name, kind}` or `null` | The last place shown, taken from `DRAW_BOUNDARY` or a single-location `NAVIGATE_TO_LOCATION` (only when it has a `kind`). `kind` ∈ `bezirk`, `stadtteil`, `address`. Lets "was gibt es dort?" work. |
+| `lastLocation` | `{name, kind}` or `null` | The last place shown, taken from `DRAW_BOUNDARY` or a single-location `NAVIGATE_TO_LOCATION` (only when it has a `kind`). `kind` is a `LocationKind` of the backend's city profile (Hamburg: `bezirk`, `stadtteil`, `address`); unknown kinds are ignored. Lets "was gibt es dort?" work. |
 
 The backend treats `state` as untrusted input: unknown layer ids, filters
 on unknown layers, and filter operators it doesn't know are silently
@@ -262,7 +262,10 @@ them, but no current backend code path sends them.
 
 ```ts
 type Coordinates = { lon: number; lat: number };          // WGS84
-type LocationKind = "bezirk" | "stadtteil" | "address";
+// One of the backend's city profile kinds (lowercase identifier,
+// e.g. Hamburg: "bezirk" | "stadtteil" | "address"). Treat as opaque:
+// store it and send it back unchanged.
+type LocationKind = string;
 type GeoJSONFeatureCollection = { type: "FeatureCollection"; features: Feature[] }; // WGS84
 ```
 

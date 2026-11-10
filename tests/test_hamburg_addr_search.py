@@ -1,11 +1,22 @@
-"""Unit tests for ``AddressResolver`` against a mocked HTTP transport."""
+"""Unit tests for ``HamburgAddrSearchGeocoder``, built from the Hamburg
+profile, against a mocked HTTP transport."""
 
 import json
 
 import httpx
 
-from cwym_agent.geodata.address_resolver import AddressResolver
+from cwym_agent.city_profile import load_profile
+from cwym_agent.geodata.adapters import build_geocoder
+from cwym_agent.geodata.adapters.hamburg_addr_search import HamburgAddrSearchGeocoder
 from cwym_agent.geodata.settings import GeodataSettings
+
+_PROFILE = load_profile("hamburg")
+
+
+def _geocoder(http_client: httpx.Client) -> HamburgAddrSearchGeocoder:
+    geocoder = build_geocoder(_PROFILE.geocoder, GeodataSettings(), http_client)
+    assert isinstance(geocoder, HamburgAddrSearchGeocoder)
+    return geocoder
 
 
 def _hit(
@@ -29,18 +40,18 @@ def _hit(
     }
 
 
-def _client_for(hits: list[dict]) -> AddressResolver:
+def _client_for(hits: list[dict]) -> HamburgAddrSearchGeocoder:
     def handler(request: httpx.Request) -> httpx.Response:
         return httpx.Response(200, json={"hits": {"hits": hits}})
 
     http_client = httpx.Client(transport=httpx.MockTransport(handler))
-    return AddressResolver(GeodataSettings(), http_client=http_client)
+    return _geocoder(http_client)
 
 
 class TestResolve:
     def test_no_hits_returns_none(self):
         resolver = _client_for([])
-        assert resolver.resolve("nonsense query") is None
+        assert resolver.search("nonsense query") is None
 
     def test_prefers_broad_type_over_higher_scoring_street(self):
         # Mirrors the real "Wandsbek" query: many higher-scoring Street
@@ -53,7 +64,7 @@ class TestResolve:
         ]
         resolver = _client_for(hits)
 
-        result = resolver.resolve("Wandsbek")
+        result = resolver.search("Wandsbek")
 
         assert result is not None
         assert result.name == "Wandsbek"
@@ -67,7 +78,7 @@ class TestResolve:
         ]
         resolver = _client_for(hits)
 
-        result = resolver.resolve("Altona")
+        result = resolver.search("Altona")
 
         assert result is not None
         assert result.name == "Altona"
@@ -79,7 +90,7 @@ class TestResolve:
         ]
         resolver = _client_for(hits)
 
-        result = resolver.resolve("Mönckebergstraße")
+        result = resolver.search("Mönckebergstraße")
 
         assert result is not None
         assert result.name == "Mönckebergstraße"
@@ -88,7 +99,7 @@ class TestResolve:
         hits = [_hit("Hamburg-Nord", 10.0, 53.6, "County", 250.0)]
         resolver = _client_for(hits)
 
-        result = resolver.resolve("Hamburg-Nord")
+        result = resolver.search("Hamburg-Nord")
 
         assert result is not None
         assert result.confidence == 1.0
@@ -102,7 +113,7 @@ class TestResolve:
         hits = [_hit("Wandsbek", 10.11, 53.64, "District", 58.3, geographicextent=polygon)]
         resolver = _client_for(hits)
 
-        result = resolver.resolve("Wandsbek")
+        result = resolver.search("Wandsbek")
 
         assert result is not None
         assert result.boundary == {"type": "Polygon", "coordinates": polygon["coordinates"]}
@@ -111,7 +122,7 @@ class TestResolve:
         hits = [_hit("Ottensen", 9.93, 53.55, "District", 71.1)]
         resolver = _client_for(hits)
 
-        result = resolver.resolve("Ottensen")
+        result = resolver.search("Ottensen")
 
         assert result is not None
         assert result.kind == "stadtteil"
@@ -120,7 +131,7 @@ class TestResolve:
         hits = [_hit("Altona", 9.85, 53.59, "County", 57.7)]
         resolver = _client_for(hits)
 
-        result = resolver.resolve("Altona")
+        result = resolver.search("Altona")
 
         assert result is not None
         assert result.kind == "bezirk"
@@ -129,7 +140,7 @@ class TestResolve:
         hits = [_hit("Mönckebergstraße 1", 10.0, 53.55, "Address", 41.1)]
         resolver = _client_for(hits)
 
-        result = resolver.resolve("Mönckebergstraße 1")
+        result = resolver.search("Mönckebergstraße 1")
 
         assert result is not None
         assert result.kind == "address"
@@ -138,7 +149,7 @@ class TestResolve:
         hits = [_hit("Mönckebergstraße", 10.0, 53.55, "Street", 50.0)]
         resolver = _client_for(hits)
 
-        result = resolver.resolve("Mönckebergstraße")
+        result = resolver.search("Mönckebergstraße")
 
         assert result is not None
         assert result.kind is None
@@ -151,7 +162,7 @@ class TestResolve:
         hits = [_hit("Wandsbek", 10.11, 53.64, "District", 58.3, geographicextent=polygon)]
         resolver = _client_for(hits)
 
-        result = resolver.resolve("Wandsbek")
+        result = resolver.search("Wandsbek")
 
         assert result is not None
         assert result.extent == (10.0, 53.5, 10.1, 53.6)
@@ -167,7 +178,7 @@ class TestResolve:
         hits = [_hit("Multi", 10.5, 53.8, "District", 58.3, geographicextent=multipolygon)]
         resolver = _client_for(hits)
 
-        result = resolver.resolve("Multi")
+        result = resolver.search("Multi")
 
         assert result is not None
         assert result.extent == (10.0, 53.5, 11.2, 54.2)
@@ -177,7 +188,7 @@ class TestResolve:
         hits = [_hit("Mönckebergstraße", 10.0, 53.55, "Street", 50.0, geographicextent=point_extent)]
         resolver = _client_for(hits)
 
-        result = resolver.resolve("Mönckebergstraße")
+        result = resolver.search("Mönckebergstraße")
 
         assert result is not None
         assert result.boundary is None
@@ -186,7 +197,7 @@ class TestResolve:
         hits = [_hit("Altona", 9.85, 53.59, "County", 57.7)]
         resolver = _client_for(hits)
 
-        result = resolver.resolve("Altona")
+        result = resolver.search("Altona")
 
         assert result is not None
         assert result.boundary is None
@@ -197,9 +208,27 @@ class TestResolve:
             return httpx.Response(500, text="internal error")
 
         http_client = httpx.Client(transport=httpx.MockTransport(handler))
-        resolver = AddressResolver(GeodataSettings(), http_client=http_client)
+        resolver = _geocoder(http_client)
 
-        assert resolver.resolve("Wandsbek") is None
+        assert resolver.search("Wandsbek") is None
+
+    def test_request_goes_to_the_profile_url(self):
+        captured = {}
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            captured["url"] = str(request.url.copy_with(query=None))
+            return httpx.Response(200, json={"hits": {"hits": []}})
+
+        _geocoder(httpx.Client(transport=httpx.MockTransport(handler))).search("Wandsbek")
+
+        assert captured["url"] == _PROFILE.geocoder.url
+
+    def test_env_url_overrides_the_profile(self, monkeypatch):
+        monkeypatch.setenv("CWYM_ADDRESS_SEARCH_URL", "https://mirror.example/addr_search")
+
+        geocoder = build_geocoder(_PROFILE.geocoder, GeodataSettings(), httpx.Client())
+
+        assert geocoder.url == "https://mirror.example/addr_search"
 
     def test_request_uses_source_envelope(self):
         captured = {}
@@ -209,9 +238,9 @@ class TestResolve:
             return httpx.Response(200, json={"hits": {"hits": []}})
 
         http_client = httpx.Client(transport=httpx.MockTransport(handler))
-        resolver = AddressResolver(GeodataSettings(), http_client=http_client)
+        resolver = _geocoder(http_client)
 
-        resolver.resolve("Wandsbek")
+        resolver.search("Wandsbek")
 
         assert captured["params"]["source_content_type"] == "application/json"
         source = json.loads(captured["params"]["source"])
@@ -231,7 +260,7 @@ class TestAmbiguousAreas:
             ]
         )
 
-        result = resolver.resolve("Hoheluft")
+        result = resolver.search("Hoheluft")
 
         assert result.name == "Hoheluft-Ost"
         assert result.alternatives == ["Hoheluft-West"]
@@ -245,7 +274,7 @@ class TestAmbiguousAreas:
             ]
         )
 
-        result = resolver.resolve("Altona")
+        result = resolver.search("Altona")
 
         assert result.name == "Altona"
         assert result.alternatives == []
@@ -253,7 +282,7 @@ class TestAmbiguousAreas:
     def test_single_prefix_match_is_not_ambiguous(self):
         resolver = _client_for([_hit("Barmbek-Nord", 10.04, 53.6, "District", 60.0)])
 
-        assert resolver.resolve("Barmbek").alternatives == []
+        assert resolver.search("Barmbek").alternatives == []
 
     def test_streets_never_count(self):
         resolver = _client_for(
@@ -263,4 +292,4 @@ class TestAmbiguousAreas:
             ]
         )
 
-        assert resolver.resolve("Hoheluft").alternatives == []
+        assert resolver.search("Hoheluft").alternatives == []

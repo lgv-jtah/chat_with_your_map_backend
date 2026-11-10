@@ -50,19 +50,19 @@ def build_pipeline(
     ``profile`` is the deployment's city profile (Section 14.3); by
     default it's loaded from ``CWYM_CITY_PROFILE``. It is loaded first, so
     a missing or invalid profile fails before the slow warm-up. The
-    components don't read from it yet (CHAT-5); its id is kept in
-    ``pipeline.metadata["city_profile"]``.
+    default ``RealDataServices`` builds the city's data sources from it;
+    its id is kept in ``pipeline.metadata["city_profile"]``.
 
     If ``data_services`` exposes a ``warm_up()`` method (the real
-    ``RealDataServices`` does - it fetches and embeds Hamburg's ~6,500
-    map layers), it is called here so the cost is paid once, when the
+    ``RealDataServices`` does - it fetches and embeds the city's
+    thousands of map layers), it is called here so the cost is paid once, when the
     pipeline is built, not on a user's first query.
     """
 
     profile = profile if profile is not None else load_profile()
     logger.info("City profile: %s (%s), languages %s", profile.id, profile.name, ", ".join(profile.languages))
     llm = llm if llm is not None else Qwen3Client()
-    data_services = data_services if data_services is not None else RealDataServices(llm=llm)
+    data_services = data_services if data_services is not None else RealDataServices(profile, llm=llm)
 
     warm_up = getattr(data_services, "warm_up", None)
     if callable(warm_up):
@@ -70,7 +70,7 @@ def build_pipeline(
 
     pipeline = Pipeline(metadata={"city_profile": profile.id})
 
-    pipeline.add_component("master_agent", MasterAgentComponent(llm=llm))
+    pipeline.add_component("master_agent", MasterAgentComponent(profile, llm=llm))
     pipeline.add_component("agent_executor", AgentExecutorComponent(data_services=data_services))
     pipeline.add_component("result_aggregator", ResultAggregatorComponent())
     pipeline.add_component("command_builder", CommandBuilderComponent())
@@ -97,7 +97,7 @@ def run_pipeline(
 
     :param allowed_layer_ids: the requesting portal's own layer ids
         (``PortalCatalogResolver``, Section 8), or ``None`` to search
-        Hamburg's full layer catalog unscoped.
+        the city's full layer catalog unscoped.
     :param context: this request's validated conversation context
         (Section 10) - map state + recent history. ``None`` on a
         request with no usable ``portal_context``/state to validate
