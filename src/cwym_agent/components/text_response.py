@@ -95,6 +95,7 @@ class TextResponseComponent:
         layer_catalog: LayerCatalog | None = None,
         bridge: AGUIEventBridge | None = None,
         language: str | None = None,
+        supported_commands: frozenset[str] | None = None,
     ):
         """:param language: the answer language (ISO 639-1) resolved for
         this turn; None means the profile's default."""

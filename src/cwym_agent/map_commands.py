@@ -388,3 +388,13 @@ LEGACY_COMMAND_TYPES: frozenset[str] = frozenset(
 """What a client that doesn't send ``supported_commands`` executes - the
 addon before CHAT-15. The backend only emits other types to clients that
 declare them."""
+
+
+def supported_command_types(declared) -> frozenset[str]:
+    """The command types to emit for a client: the known types it declares
+    (``forwardedProps.supported_commands``), always including the legacy
+    ones; the legacy set when it declares nothing usable."""
+
+    if not isinstance(declared, list):
+        return LEGACY_COMMAND_TYPES
+    return LEGACY_COMMAND_TYPES | {t for t in declared if isinstance(t, str) and t in COMMAND_TYPES}

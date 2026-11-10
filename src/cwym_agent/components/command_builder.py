@@ -73,6 +73,7 @@ from cwym_agent.bridge import AGUIEventBridge
 from cwym_agent.geodata.conversation_context import ConversationContext
 from cwym_agent.geodata.types import FilterResult
 from cwym_agent.map_commands import (
+    LEGACY_COMMAND_TYPES,
     ActivateLayerCommand,
     AddResultLayerCommand,
     AddResultLayerPayload,
@@ -165,8 +166,12 @@ class CommandBuilderComponent:
         aggregated: dict,
         context: ConversationContext | None = None,
         bridge: AGUIEventBridge | None = None,
+        supported_commands: frozenset[str] | None = None,
     ):
-        commands = self._build_commands(aggregated, context)
+        """:param supported_commands: the command types the client executes
+        (``map_commands.supported_command_types``); None = the legacy set."""
+
+        commands = self._build_commands(aggregated, context, supported_commands or LEGACY_COMMAND_TYPES)
         if commands:
             logger.info("command_builder: %s", [cmd["type"] for cmd in commands])
         else:
@@ -179,7 +184,12 @@ class CommandBuilderComponent:
 
         return {"commands": commands}
 
-    def _build_commands(self, aggregated: dict, context: ConversationContext | None = None) -> list[dict]:
+    def _build_commands(
+        self,
+        aggregated: dict,
+        context: ConversationContext | None = None,
+        supported: frozenset[str] = LEGACY_COMMAND_TYPES,
+    ) -> list[dict]:
         # Checked before the action_detector-gated branches below,
         # unconditionally: Qwen3's plan can legitimately call filter_agent
         # without also calling action_detector (the intent is already
@@ -197,7 +207,7 @@ class CommandBuilderComponent:
             return []
 
         if aggregated.get("dataset_answer") is not None:
-            return self._build_dataset_commands(aggregated, context)
+            return self._build_dataset_commands(aggregated, context, supported)
 
         if aggregated.get("filter_result") is not None:
             return self._build_filter_commands(aggregated, context)
@@ -365,7 +375,9 @@ class CommandBuilderComponent:
             )
         return commands, to_clear
 
-    def _build_dataset_commands(self, aggregated: dict, context: ConversationContext | None) -> list[dict]:
+    def _build_dataset_commands(
+        self, aggregated: dict, context: ConversationContext | None, supported: frozenset[str]
+    ) -> list[dict]:
         """A tier 1 analysis (architecture 14.4) on the map, with the
         commands that exist until SHOW_CHART/HIGHLIGHT_FEATURES (CHAT-14):
 

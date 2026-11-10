@@ -93,6 +93,7 @@ def run_pipeline(
     context: ConversationContext | None = None,
     layer_catalog: LayerCatalog | None = None,
     language: str | None = None,
+    supported_commands: frozenset[str] | None = None,
 ) -> str:
     """Run the pipeline for one query, returning the final response text.
 
@@ -109,6 +110,8 @@ def run_pipeline(
         FilterAgent targeting), not just the bare id list.
     :param language: the turn's answer language (``cwym_agent.language``);
         None means the profile's default.
+    :param supported_commands: the MapCommand types the client executes
+        (``map_commands.supported_command_types``); None = the legacy set.
     """
 
     result = pipeline.run(
@@ -127,13 +130,14 @@ def run_pipeline(
                 "layer_catalog": layer_catalog,
             },
             "result_aggregator": {"query": query},
-            "command_builder": {"context": context, "bridge": bridge},
+            "command_builder": {"context": context, "bridge": bridge, "supported_commands": supported_commands},
             "text_response": {
                 "query": query,
                 "context": context,
                 "layer_catalog": layer_catalog,
                 "bridge": bridge,
                 "language": language,
+                "supported_commands": supported_commands,
             },
         }
     )

@@ -542,3 +542,31 @@ class TestAnswerLanguage:
     def test_unsupported_ui_language_falls_back_to_the_profile_default(self, monkeypatch):
         assert self._language(monkeypatch, [("user", "Altona?")], ui_language="platt") == ("de", "default")
         assert self._language(monkeypatch, [("user", "Altona?")], ui_language=["en"]) == ("de", "default")
+
+
+class TestSupportedCommands:
+    """CHAT-14: the client declares the MapCommand types it executes."""
+
+    def _run(self, monkeypatch, forwarded_props):
+        calls = _recording_run_pipeline(monkeypatch)
+        body = _run_input("Zeige mir Fahrradstationen")
+        body["forwardedProps"] = forwarded_props
+        with _TraceCollector() as traces:
+            with client.stream("POST", "/api/query", json=body) as response:
+                assert response.status_code == 200
+                "".join(response.iter_text())
+        [record] = traces.records
+        return calls[0]["supported_commands"], record["request"]["supportedCommands"]
+
+    def test_older_clients_get_the_legacy_types(self, monkeypatch):
+        from cwym_agent.map_commands import LEGACY_COMMAND_TYPES
+
+        assert self._run(monkeypatch, {}) == (LEGACY_COMMAND_TYPES, [])
+        assert self._run(monkeypatch, {"supported_commands": "SHOW_CHART"}) == (LEGACY_COMMAND_TYPES, [])
+
+    def test_declared_known_types_are_added(self, monkeypatch):
+        supported, traced = self._run(monkeypatch, {"supported_commands": ["SHOW_CHART", "HIGHLIGHT_FEATURES", "SELF_DESTRUCT"]})
+
+        assert {"SHOW_CHART", "HIGHLIGHT_FEATURES", "ACTIVATE_LAYER"} <= supported
+        assert "SELF_DESTRUCT" not in supported
+        assert traced == ["HIGHLIGHT_FEATURES", "SHOW_CHART"]
