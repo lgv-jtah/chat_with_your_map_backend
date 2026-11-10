@@ -74,7 +74,7 @@ def build_pipeline(
     pipeline.add_component("agent_executor", AgentExecutorComponent(data_services=data_services))
     pipeline.add_component("result_aggregator", ResultAggregatorComponent())
     pipeline.add_component("command_builder", CommandBuilderComponent())
-    pipeline.add_component("text_response", TextResponseComponent(llm=llm))
+    pipeline.add_component("text_response", TextResponseComponent(profile, llm=llm))
 
     pipeline.connect("master_agent.plan_json", "agent_executor.plan_json")
     pipeline.connect("agent_executor.execution_log", "result_aggregator.execution_log")
@@ -92,6 +92,7 @@ def run_pipeline(
     allowed_layer_ids: list[str] | None = None,
     context: ConversationContext | None = None,
     layer_catalog: LayerCatalog | None = None,
+    language: str | None = None,
 ) -> str:
     """Run the pipeline for one query, returning the final response text.
 
@@ -106,11 +107,19 @@ def run_pipeline(
         was derived from, threaded separately because sub-agents/NLG
         need layer *metadata* (names, an active layer's typ/url for
         FilterAgent targeting), not just the bare id list.
+    :param language: the turn's answer language (``cwym_agent.language``);
+        None means the profile's default.
     """
 
     result = pipeline.run(
         data={
-            "master_agent": {"query": query, "context": context, "layer_catalog": layer_catalog, "bridge": bridge},
+            "master_agent": {
+                "query": query,
+                "context": context,
+                "layer_catalog": layer_catalog,
+                "bridge": bridge,
+                "language": language,
+            },
             "agent_executor": {
                 "bridge": bridge,
                 "allowed_layer_ids": allowed_layer_ids,
@@ -119,7 +128,13 @@ def run_pipeline(
             },
             "result_aggregator": {"query": query},
             "command_builder": {"context": context, "bridge": bridge},
-            "text_response": {"query": query, "context": context, "layer_catalog": layer_catalog, "bridge": bridge},
+            "text_response": {
+                "query": query,
+                "context": context,
+                "layer_catalog": layer_catalog,
+                "bridge": bridge,
+                "language": language,
+            },
         }
     )
 

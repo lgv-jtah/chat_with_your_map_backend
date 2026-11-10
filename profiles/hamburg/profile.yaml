@@ -9,7 +9,7 @@
 id: hamburg
 name: Hamburg
 official_name: Freie und Hansestadt Hamburg
-languages: [de]
+languages: [de, en]
 
 # The city itself - Hamburg's address search has no city-wide hit.
 default_location:

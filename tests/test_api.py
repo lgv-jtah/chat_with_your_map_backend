@@ -505,3 +505,40 @@ def test_query_endpoint_pipeline_failure_is_traced_with_traceback(monkeypatch, c
     assert failure.exc_info is not None
     assert failure.thread_id == "thread-err"
     assert failure.run_id == "run-1"
+
+
+class TestAnswerLanguage:
+    """CHAT-7: the endpoint resolves the answer language and passes it to
+    the pipeline and the trace."""
+
+    def _language(self, monkeypatch, messages, **forwarded_props):
+        calls = _recording_run_pipeline(monkeypatch)
+        body = _run_input("x")
+        body["messages"] = [
+            {"id": f"m{i}", "role": role, "content": text} for i, (role, text) in enumerate(messages)
+        ]
+        body["forwardedProps"] = forwarded_props
+        with _TraceCollector() as traces:
+            with client.stream("POST", "/api/query", json=body) as response:
+                assert response.status_code == 200
+                "".join(response.iter_text())
+        [record] = traces.records
+        return calls[0]["language"], record["request"]["languageSource"]
+
+    def test_from_the_message(self, monkeypatch):
+        assert self._language(monkeypatch, [("user", "Show me bike stations in Wandsbek")], ui_language="de") == (
+            "en", "detected"
+        )
+        assert self._language(monkeypatch, [("user", "Zeige mir Fahrradstationen")]) == ("de", "detected")
+
+    def test_from_earlier_messages(self, monkeypatch):
+        messages = [("user", "Show me the hospitals"), ("assistant", "Here they are."), ("user", "Altona?")]
+
+        assert self._language(monkeypatch, messages) == ("en", "history")
+
+    def test_from_the_ui_language(self, monkeypatch):
+        assert self._language(monkeypatch, [("user", "Altona?")], ui_language="en-GB") == ("en", "ui")
+
+    def test_unsupported_ui_language_falls_back_to_the_profile_default(self, monkeypatch):
+        assert self._language(monkeypatch, [("user", "Altona?")], ui_language="platt") == ("de", "default")
+        assert self._language(monkeypatch, [("user", "Altona?")], ui_language=["en"]) == ("de", "default")

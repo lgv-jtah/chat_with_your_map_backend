@@ -71,7 +71,11 @@ class MasterAgentComponent:
         context: ConversationContext | None = None,
         layer_catalog: LayerCatalog | None = None,
         bridge: AGUIEventBridge | None = None,
+        language: str | None = None,
     ):
+        """:param language: the answer language (ISO 639-1) resolved for
+        this turn; None means the profile's default."""
+
         prompt = self._build_planning_prompt(query, context, layer_catalog)
         observability.set_planning_prompt(prompt)
 

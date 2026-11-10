@@ -37,6 +37,7 @@ from haystack import component
 
 from cwym_agent import observability
 from cwym_agent.bridge import AGUIEventBridge
+from cwym_agent.city_profile import CityProfile
 from cwym_agent.geodata import clarification
 from cwym_agent.geodata.conversation_context import ConversationContext, render_context_block
 from cwym_agent.geodata.portal_catalog_resolver import LayerCatalog
@@ -57,8 +58,9 @@ def _log_answer(text: str, verbatim: bool) -> None:
 
 @component
 class TextResponseComponent:
-    def __init__(self, llm: Any | None = None):
+    def __init__(self, profile: CityProfile, llm: Any | None = None):
         self.llm = llm if llm is not None else Qwen3Client()
+        self.default_language = profile.default_language
 
     @component.output_types(response_text=str)
     def run(
@@ -69,7 +71,12 @@ class TextResponseComponent:
         context: ConversationContext | None = None,
         layer_catalog: LayerCatalog | None = None,
         bridge: AGUIEventBridge | None = None,
+        language: str | None = None,
     ):
+        """:param language: the answer language (ISO 639-1) resolved for
+        this turn; None means the profile's default."""
+
+        language = language or self.default_language
         verbatim = self._analysis_reply(aggregated.get("analysis_result"))
         if verbatim is None:
             verbatim = self._ambiguous_location_reply(aggregated.get("ambiguous_location"))

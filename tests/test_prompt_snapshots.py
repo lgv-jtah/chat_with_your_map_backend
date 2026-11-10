@@ -153,7 +153,7 @@ class TestResponsePrompts:
 
     def _render(self, aggregated: dict, commands: list) -> str:
         llm = _RecordingLlm(generate_reply="Antwort")
-        TextResponseComponent(llm=llm).run(
+        TextResponseComponent(_PROFILE, llm=llm).run(
             aggregated,
             "Zeig mir Fahrradstationen in Wandsbek",
             commands=commands,
