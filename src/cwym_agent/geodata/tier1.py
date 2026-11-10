@@ -173,6 +173,7 @@ class Tier1Analyzer:
     def _analyze_dataset(self, query, operation, dataset: LoadedDataset, boundary, answer: DatasetAnswer) -> DatasetAnswer:
         config = dataset.config
         answer.dataset_label = dict(config.label)
+        answer.dataset_key = dataset.key
         answer.labels = {name: dict(a.label) for name, a in config.attributes.items()}
         answer.item_field = config.lookup_field or config.id_field
         answer.show_fields = list(config.attributes)

@@ -130,7 +130,12 @@ def run_pipeline(
                 "layer_catalog": layer_catalog,
             },
             "result_aggregator": {"query": query},
-            "command_builder": {"context": context, "bridge": bridge, "supported_commands": supported_commands},
+            "command_builder": {
+                "context": context,
+                "bridge": bridge,
+                "supported_commands": supported_commands,
+                "language": language,
+            },
             "text_response": {
                 "query": query,
                 "context": context,
