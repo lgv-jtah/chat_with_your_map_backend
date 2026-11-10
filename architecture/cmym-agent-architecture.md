@@ -1712,7 +1712,7 @@ The ASCEND Assistant (`../munich/ascend-assistant`) is a chat assistant for the 
 | Frontend | `chatWithYourMap` addon, Masterportal 3.27.1 | `chatAI` addon, Masterportal 3.20.x |
 | Tests / ops | Offline + opt-in live tests, run traces (Section 10.10) | No tests, no CI |
 
-**What is Hamburg-specific in CWYM today:**
+**What was Hamburg-specific in CWYM** (moved into the profile and adapters by CHAT-5, see 14.3):
 
 - The endpoints in `geodata/settings.py` (layer catalog, address search, area boundaries, UDP agent).
 - The address search's response format and its place types (`county`→bezirk, `district`→stadtteil) in `address_resolver.py`.
@@ -1741,7 +1741,8 @@ Data services are duck-typed (no `Protocol`), settings come from the environment
 
 ### 14.2 ADR-002: CWYM becomes one product for several cities; ASCEND's features move into it
 
-**Status:** accepted, 2 Nov 2026. Not implemented yet.
+**Status:** accepted, 2 Nov 2026.
+In progress: the city profile (CHAT-3) and the interfaces and adapters (CHAT-5) are done (14.6 steps 1-2).
 
 **Context.** Munich wants what ASCEND does; Hamburg would benefit from ASCEND's features too. Maintaining two assistants with two LLM stacks, two protocols and two addons doubles the work, and ASCEND has no tests. CWYM has the sturdier base (typed protocol, tests, traces, live OAF/WFS filtering), ASCEND has the features and the Munich data knowledge.
 
@@ -1797,6 +1798,22 @@ A `CityProfile` is loaded from `profiles/<city>/profile.yaml` at startup and pas
 Secrets and endpoints that differ per environment (LLM URL and key, CORS origins) stay in environment variables.
 
 Data sources sit behind `Protocol`s: `Geocoder`, `LayerCatalogSource`, `BoundarySource`, `DatasetSource` (tier 1), `AnalysisAgent` (tier 2), and `DataServices` for the whole. Today's Hamburg classes become one implementation each. Where Munich's Elasticsearch services have the same shape as Hamburg's, the same adapter is reused with a different field mapping. Place kinds come from the profile instead of the fixed `bezirk | stadtteil | address` list.
+
+**Implemented (CHAT-5).**
+
+- `geodata/interfaces.py` defines `Geocoder`, `BoundarySource`, `LayerCatalogSource` and `DataServices`.
+  `DatasetSource` (tier 1) and `AnalysisAgent` (tier 2) follow with their own steps.
+- The adapters live in `geodata/adapters`: `hamburg_addr_search` (geocoder), `hamburg_layers_es` (layer catalog) and the generic `ogc_api_features` (boundaries).
+  Each profile section names its adapter; the factories in `geodata/adapters/__init__.py` build them, with endpoint URLs from the profile unless a `CWYM_*_URL` variable overrides them.
+- `LocationResolver` combines geocoder and boundary source for any city: an area hit gets the official outline instead of the geocoder's rectangle.
+- `RealDataServices` takes the profile: the city's own names (`name`, `official_name`) resolve to `default_location` with the city `extent`, which is also the fallback and the zoom limit for UDP result layers (`HAMBURG_EXTENT` is gone).
+- `LocationKind` (`city_profile.py`) is a lowercase identifier; the profile's `geocoder.place_types` values are the city's kinds.
+  Map commands carry them unchanged; `build_context` drops client state whose kind the profile doesn't have, instead of rejecting the request.
+  `docs/frontend-api.md` treats `LocationKind` as an opaque string.
+- The profile's `prompt` section (city genitive, area terms, example places, neighbouring regions, a colloquial-term layer example) and `analysis_agent.example_question` fill the prompt templates.
+  `MasterAgentComponent` builds the planner's system prompt and tools from the profile and passes them to `llm.plan()`, so the LLM client carries no city text.
+  `udp_analysis` is only offered when the profile has an `analysis_agent`.
+- Two tests hold the line: `test_prompt_snapshots.py` keeps Hamburg's rendered prompts byte-identical (and renders them for a fictional city without any Hamburg wording), and `test_no_city_in_core.py` fails on Hamburg in `src/` outside its adapters and the stubs.
 
 **LLM client.** `Qwen3Client` becomes `ChatLLMClient`:
 
@@ -1895,8 +1912,8 @@ New MapCommands, in `map_commands.py` and `docs/frontend-api.md`:
 
 **Phase 1, first deliverable: Munich on CWYM basics.** Layers, places and filters work in the Munich portal, in German and English.
 
-1. `CityProfile` and loader; a Hamburg profile that reproduces today's behaviour.
-2. Move the Hamburg-specific code (14.1) behind the `Protocol`s.
+1. `CityProfile` and loader; a Hamburg profile that reproduces today's behaviour. Done (CHAT-3).
+2. Move the Hamburg-specific code (14.1) behind the `Protocol`s. Done (CHAT-5, 14.3).
 3. `ChatLLMClient` (optional reasoning, `CWYM_LLM_*`), live test against IONOS.
 4. Language detection, bilingual prompts, use of `portal_context.languages`.
 5. Munich profile: check and adapt the geocoder, layer index and boundary sources.
