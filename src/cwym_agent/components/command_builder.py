@@ -65,6 +65,7 @@ Altona" is still a map request, not the Share panel.
 import logging
 import re
 import uuid
+from collections.abc import Sequence
 
 from haystack import component
 from shapely.geometry import shape
@@ -163,8 +164,37 @@ def _detect_tool_name(query: str) -> str | None:
     return None
 
 
+def apply_exclusive_groups(commands: list[dict], groups: Sequence[Sequence[str]]) -> list[dict]:
+    """Before each ACTIVATE_LAYER of a layer in an exclusive group, a
+    DEACTIVATE_LAYER for the group's other layers (except those switched
+    on by the same command). Switching off a hidden layer changes
+    nothing, so this doesn't depend on knowing what is visible."""
+
+    group_of = {layer_id: group for group in groups for layer_id in group}
+    result = []
+    for command in commands:
+        if command["type"] == "ACTIVATE_LAYER":
+            activated = set(command["payload"]["layerIds"])
+            siblings = sorted(
+                {other for layer_id in activated for other in group_of.get(layer_id, ())} - activated
+            )
+            if siblings:
+                result.append(
+                    DeactivateLayerCommand(
+                        command_id=str(uuid.uuid4()), payload=DeactivateLayerPayload(layer_ids=siblings)
+                    ).model_dump(by_alias=True)
+                )
+        result.append(command)
+    return result
+
+
 @component
 class CommandBuilderComponent:
+    def __init__(self, exclusive_layer_groups: Sequence[Sequence[str]] = ()):
+        """:param exclusive_layer_groups: the profile's groups of layers of
+        which only one may be visible at a time."""
+
+        self.exclusive_layer_groups = [list(group) for group in exclusive_layer_groups]
     @component.output_types(commands=list)
     def run(
         self,
@@ -181,6 +211,7 @@ class CommandBuilderComponent:
         commands = self._build_commands(
             aggregated, context, supported_commands or LEGACY_COMMAND_TYPES, language or "de"
         )
+        commands = apply_exclusive_groups(commands, self.exclusive_layer_groups)
         if commands:
             logger.info("command_builder: %s", [cmd["type"] for cmd in commands])
         else:

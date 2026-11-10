@@ -534,3 +534,39 @@ class TestAmbiguousLocation:
         aggregated = {**_aggregated("Zeigen", layer=_LAYER, locations=[hoheluft]), "ambiguous_location": hoheluft}
 
         assert builder._build_commands(aggregated) == []
+
+
+class TestExclusiveLayerGroups:
+    """CHAT-14: switching on one layer of an exclusive group switches the
+    others off."""
+
+    _GROUPS = [["energie", "baujahr", "eigentuemer"], ["a", "b"]]
+
+    def _activate(self, *layer_ids):
+        return {"commandId": "c", "type": "ACTIVATE_LAYER", "payload": {"layerIds": list(layer_ids)}}
+
+    def test_siblings_are_switched_off_first(self):
+        from cwym_agent.components.command_builder import apply_exclusive_groups
+
+        commands = apply_exclusive_groups([self._activate("energie")], self._GROUPS)
+
+        assert [(c["type"], c["payload"]["layerIds"]) for c in commands] == [
+            ("DEACTIVATE_LAYER", ["baujahr", "eigentuemer"]),
+            ("ACTIVATE_LAYER", ["energie"]),
+        ]
+
+    def test_layers_outside_groups_and_other_commands_are_untouched(self):
+        from cwym_agent.components.command_builder import apply_exclusive_groups
+
+        commands = [self._activate("27764"), {"commandId": "z", "type": "ZOOM_TO_EXTENT", "payload": {"bbox": [0, 0, 1, 1]}}]
+
+        assert apply_exclusive_groups(commands, self._GROUPS) == commands
+
+    def test_through_the_builder(self):
+        builder = CommandBuilderComponent(self._GROUPS)
+        aggregated = _aggregated("Zeigen", layer=LayerMatch("Baujahr", "baujahr", 0.9))
+
+        commands = builder.run(aggregated)["commands"]
+
+        assert [c["type"] for c in commands] == ["DEACTIVATE_LAYER", "ACTIVATE_LAYER"]
+        assert commands[0]["payload"]["layerIds"] == ["eigentuemer", "energie"]

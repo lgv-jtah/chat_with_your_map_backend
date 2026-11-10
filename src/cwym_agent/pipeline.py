@@ -73,7 +73,7 @@ def build_pipeline(
     pipeline.add_component("master_agent", MasterAgentComponent(profile, llm=llm))
     pipeline.add_component("agent_executor", AgentExecutorComponent(data_services=data_services))
     pipeline.add_component("result_aggregator", ResultAggregatorComponent())
-    pipeline.add_component("command_builder", CommandBuilderComponent())
+    pipeline.add_component("command_builder", CommandBuilderComponent(profile.exclusive_layer_groups))
     pipeline.add_component("text_response", TextResponseComponent(profile, llm=llm))
 
     pipeline.connect("master_agent.plan_json", "agent_executor.plan_json")
