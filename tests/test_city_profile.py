@@ -221,3 +221,47 @@ def test_startup_aborts_on_invalid_profile(monkeypatch, tmp_path, caplog):
 def test_profiles_dir_env(monkeypatch, tmp_path):
     monkeypatch.setenv("CWYM_PROFILES_DIR", str(tmp_path))
     assert city_profile.profiles_dir() == tmp_path
+
+
+# --- tier 1 datasets (CHAT-11) ---------------------------------------------
+
+
+class TestDatasets:
+    def test_hamburg_declares_none(self):
+        assert load_profile("hamburg").datasets == {}
+
+    def test_dataset_loads_with_resolved_file(self, tmp_path):
+        from fixtures.datasets import buildings_profile
+
+        profile = buildings_profile(tmp_path)
+        dataset = profile.datasets["buildings"]
+
+        assert dataset.source.path == (tmp_path / "testcity" / "buildings.geojson").resolve()
+        assert dataset.attributes["energieeffizienzklasse"].order[0] == "A+"
+        assert profile.dataset_for_layer("test_gebaeude")[0] == "buildings"
+        assert profile.dataset_for_layer("test_energieklasse")[0] == "buildings"
+        assert profile.dataset_for_layer("27764") is None
+
+    @pytest.mark.parametrize(
+        "mutate, expected",
+        [
+            (lambda d: d["datasets"]["buildings"]["source"].update(path="nope.geojson"), "dataset file not found"),
+            (lambda d: d["datasets"]["buildings"]["source"].update(type="shapefile"), "source"),
+            (lambda d: d["datasets"]["buildings"]["attributes"]["energieeffizienzklasse"].pop("order"), "needs 'order'"),
+            (lambda d: d["datasets"]["buildings"]["attributes"]["eigentuemer"].update(order=["a"]), "only for ordinal"),
+            (lambda d: d["datasets"]["buildings"]["attributes"]["eigentuemer"].update(bin_width=10), "only for number"),
+            (lambda d: d["datasets"]["buildings"]["attributes"]["baujahr"].update(top=3), "only for category"),
+            (lambda d: d["datasets"]["buildings"]["attributes"]["energieeffizienzklasse"]["colors"].update(Z="#000000"), "not in 'order'"),
+            (lambda d: d["datasets"]["buildings"]["attributes"]["energieeffizienzklasse"]["colors"].update(H="red"), "colors"),
+            (lambda d: d["datasets"]["buildings"]["attributes"]["baujahr"].update(type="date"), "type"),
+            (lambda d: d["datasets"]["buildings"]["attributes"]["baujahr"]["label"].pop("en"), "has no text for ['en']"),
+            (lambda d: d["datasets"]["buildings"]["label"].pop("de"), "datasets.buildings.label has no text for ['de']"),
+            (lambda d: d["datasets"].update(other={**d["datasets"]["buildings"], "layers": ["test_gebaeude"]}), "belongs to datasets"),
+        ],
+    )
+    def test_invalid_datasets_name_the_field(self, tmp_path, mutate, expected):
+        from fixtures.datasets import buildings_profile
+
+        with pytest.raises(CityProfileError) as e:
+            buildings_profile(tmp_path, mutate)
+        assert expected in str(e.value)
