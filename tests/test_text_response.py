@@ -178,7 +178,7 @@ class TestAmbiguousLocationReply:
     def test_three_areas(self):
         location = LocationMatch("A-Nord", 1, 1, 1, alternatives=["A-Süd", "A-West"])
 
-        assert component._ambiguous_location_reply(location) == (
+        assert component._ambiguous_location_reply(location, "de") == (
             "Den Ort gibt es mehrfach – meinst du A-Nord, A-Süd oder A-West? Die Karte habe ich noch nicht verändert."
         )
 
@@ -189,7 +189,7 @@ class TestFilterFailedIsAdmitted:
             query="Grundschulen in Hoheluft-West", layer=_LAYER, locations=[_LOCATION], action=_ACTION, filter_failed=True
         )
 
-        prompt = component._build_response_prompt(aggregated, "q", [{"type": "ACTIVATE_LAYER"}])
+        prompt = component._build_response_prompt(aggregated, "q", [{"type": "ACTIVATE_LAYER"}], None, None, "de")
 
         assert "konnte NICHT angewendet" in prompt
         assert "auf Wandsbek" in prompt
@@ -198,4 +198,4 @@ class TestFilterFailedIsAdmitted:
     def test_normal_prompt_without_failure(self):
         aggregated = _aggregated(layer=_LAYER, locations=[_LOCATION], action=_ACTION)
 
-        assert "NICHT angewendet" not in component._build_response_prompt(aggregated, "q", [{"type": "ACTIVATE_LAYER"}])
+        assert "NICHT angewendet" not in component._build_response_prompt(aggregated, "q", [{"type": "ACTIVATE_LAYER"}], None, None, "de")

@@ -1,0 +1,18 @@
+## Aktueller Kartenzustand
+Aktive Ebenen:
+- Schulen (ID 1732)
+- StadtRAD-Stationen (ID 27764)
+Aktive Filter:
+- StadtRAD-Stationen (ID 27764): anzahl_raeder gte "10"; Gebiet: Wandsbek (bezirk)
+Zuletzt angezeigter Ort: Eppendorf (stadtteil)
+
+## Bisheriger Gesprächsverlauf (älteste zuerst)
+Nutzer: Zeig mir Fahrradstationen in Wandsbek
+Assistent: Ich zeige dir die StadtRAD-Stationen in Wandsbek.
+
+Beziehe dich bei einer Folgefrage auf das bereits Gezeigte (z. B. "von den angezeigten Schulen ...") statt es als etwas komplett Neues zu beschreiben.
+
+Nutzeranfrage: "Zeig mir Fahrradstationen in Wandsbek"
+Es konnte KEINE Aktion auf der Karte ausgeführt werden - weder eine Kartenebene aktiviert noch gefiltert noch navigiert. Antworte kurz und ehrlich auf Englisch: Behaupte NICHT, dass die Karte bereits angepasst wurde oder sich etwas geändert hat. Erkläre knapp, dass das gerade nicht möglich war, und frage bei Bedarf nach mehr Details (z. B. einem konkreten Ort oder einer Kartenebene).
+
+LANGUAGE: The user wrote in English. Write your ENTIRE answer in English. Keep layer names, place names and values exactly as given above, even though they are German.

@@ -66,6 +66,26 @@ Language = Literal["de", "en"]
 LanguageSource = Literal["detected", "history", "ui", "default"]
 
 
+@dataclass(frozen=True)
+class LanguageNames:
+    """How the (German) prompts name a language."""
+
+    adjective: str
+    """German adjective, inflected for "die ... Nutzeranfrage/Antwort"."""
+    german: str
+    """German name, "auf ..."."""
+    english: str
+    """English name, for directives written in English."""
+
+
+LANGUAGE_NAMES: dict[str, LanguageNames] = {
+    "de": LanguageNames(adjective="deutsche", german="Deutsch", english="German"),
+    "en": LanguageNames(adjective="englische", german="Englisch", english="English"),
+}
+SUPPORTED_LANGUAGES = tuple(LANGUAGE_NAMES)
+"""The answer languages CWYM can detect and answer in."""
+
+
 def detect_language(text: str) -> Language | None:
     """"de", "en", or None when the message gives no clear evidence."""
 

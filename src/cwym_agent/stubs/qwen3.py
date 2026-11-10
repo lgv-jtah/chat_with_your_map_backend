@@ -71,6 +71,7 @@ class StubQwen3Generator:
         streaming_callback: StreamingCallback | None = None,
         max_tokens: int | None = None,
         label: str = "generate",
+        system_prompt: str | None = None,
     ) -> str:
         """Produce a canned German reply based on the built prompt.
 

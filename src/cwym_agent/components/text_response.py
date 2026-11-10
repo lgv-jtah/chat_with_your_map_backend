@@ -1,8 +1,9 @@
-"""``TextResponseComponent``: generates the final German-language reply.
+"""``TextResponseComponent``: generates the final reply.
 
 Builds the response prompt from the aggregated sub-agent results and
-generates the final German reply, streamed token by token into the AG-UI
-bridge as a ``TEXT_MESSAGE_*`` event sequence when a bridge is provided.
+generates the final reply in the turn's language (German or English,
+``cwym_agent.language``), streamed token by token into the AG-UI bridge
+as a ``TEXT_MESSAGE_*`` event sequence when a bridge is provided.
 
 Takes ``CommandBuilderComponent``'s actual ``commands`` output as an
 input (not just ``aggregated``) so the reply is grounded in what really
@@ -41,9 +42,31 @@ from cwym_agent.city_profile import CityProfile
 from cwym_agent.geodata import clarification
 from cwym_agent.geodata.conversation_context import ConversationContext, render_context_block
 from cwym_agent.geodata.portal_catalog_resolver import LayerCatalog
-from cwym_agent.llm.qwen3_client import Qwen3Client
+from cwym_agent.language import LANGUAGE_NAMES
+from cwym_agent.llm.qwen3_client import Qwen3Client, answer_system_prompt
 
 logger = logging.getLogger(__name__)
+
+_ANALYSIS_FAILED = {
+    "de": (
+        "Die Datenanalyse der Urban Data Platform hat gerade keine Antwort "
+        "geliefert, die Karte wurde nicht verändert. Bitte versuche es in ein "
+        "paar Minuten noch einmal."
+    ),
+    "en": (
+        "The Urban Data Platform analysis didn't return an answer just now, "
+        "and the map hasn't changed. Please try again in a few minutes."
+    ),
+}
+
+_LANGUAGE_DIRECTIVE = (
+    "\n\nLANGUAGE: The user wrote in {name}. Write your ENTIRE answer in "
+    "{name}. Keep layer names, place names and values exactly as given above, "
+    "even though they are German."
+)
+"""Ends a reply prompt for any language but German, the language of the
+prompts themselves: last in the prompt, where it outweighs the German
+around it (ASCEND's finding)."""
 
 
 def _log_answer(text: str, verbatim: bool) -> None:
@@ -77,9 +100,9 @@ class TextResponseComponent:
         this turn; None means the profile's default."""
 
         language = language or self.default_language
-        verbatim = self._analysis_reply(aggregated.get("analysis_result"))
+        verbatim = self._analysis_reply(aggregated.get("analysis_result"), language)
         if verbatim is None:
-            verbatim = self._ambiguous_location_reply(aggregated.get("ambiguous_location"))
+            verbatim = self._ambiguous_location_reply(aggregated.get("ambiguous_location"), language)
         if verbatim is not None:
             if bridge:
                 message_id = str(uuid.uuid4())
@@ -89,7 +112,8 @@ class TextResponseComponent:
             _log_answer(verbatim, verbatim=True)
             return {"response_text": verbatim}
 
-        prompt = self._build_response_prompt(aggregated, query, commands or [], context, layer_catalog)
+        prompt = self._build_response_prompt(aggregated, query, commands or [], context, layer_catalog, language)
+        system_prompt = answer_system_prompt(language)
 
         if bridge:
             message_id = str(uuid.uuid4())
@@ -101,44 +125,41 @@ class TextResponseComponent:
                 full_text.append(chunk.content)
                 bridge.emit(TextMessageContentEvent(message_id=message_id, delta=chunk.content))
 
-            self.llm.generate(prompt, streaming_callback=on_token, label="text_response")
+            self.llm.generate(prompt, streaming_callback=on_token, label="text_response", system_prompt=system_prompt)
             bridge.emit(TextMessageEndEvent(message_id=message_id))
             response_text = "".join(full_text)
         else:
-            response_text = self.llm.generate(prompt, label="text_response")
+            response_text = self.llm.generate(prompt, label="text_response", system_prompt=system_prompt)
 
         _log_answer(response_text, verbatim=False)
         return {"response_text": response_text}
 
     @staticmethod
-    def _analysis_reply(analysis) -> str | None:
+    def _analysis_reply(analysis, language: str) -> str | None:
         if analysis is None:
             return None
         if analysis.answer:
             return analysis.answer
-        return (
-            "Die Datenanalyse der Urban Data Platform hat gerade keine Antwort "
-            "geliefert, die Karte wurde nicht verändert. Bitte versuche es in ein "
-            "paar Minuten noch einmal."
-        )
+        return _ANALYSIS_FAILED[language]
 
     @staticmethod
-    def _ambiguous_location_reply(location) -> str | None:
+    def _ambiguous_location_reply(location, language: str) -> str | None:
         """A fixed question back, not LLM text: it has to name exactly the
         areas the address search found, and its wording is read back by
         ``clarification.resolve_reply`` when the user answers."""
 
         if location is None:
             return None
-        return clarification.question([location.name, *location.alternatives])
+        return clarification.question([location.name, *location.alternatives], language)
 
     def _build_response_prompt(
         self,
         aggregated: dict,
         query: str,
         commands: list,
-        context: ConversationContext | None = None,
-        layer_catalog: LayerCatalog | None = None,
+        context: ConversationContext | None,
+        layer_catalog: LayerCatalog | None,
+        language: str,
     ) -> str:
         """Build the NLG instruction prompt handed to ``self.llm.generate``.
 
@@ -153,7 +174,14 @@ class TextResponseComponent:
         ``commands`` list is. Without this gate, the LLM would happily
         narrate success from partial facts even when zero MapCommands
         were built.
+
+        The prompt is German like all prompts; ``language`` only names the
+        answer language, and for any language but German a directive at
+        the very end pins it.
         """
+
+        names = LANGUAGE_NAMES[language]
+        directive = _LANGUAGE_DIRECTIVE.format(name=names.english) if language != "de" else ""
 
         context_block = render_context_block(context, layer_catalog) if context is not None else ""
         context_note = (
@@ -171,11 +199,12 @@ class TextResponseComponent:
                 f"Nutzeranfrage: \"{query}\"\n"
                 "Es konnte KEINE Aktion auf der Karte ausgeführt werden - "
                 "weder eine Kartenebene aktiviert noch gefiltert noch "
-                "navigiert. Antworte kurz und ehrlich auf Deutsch: "
+                f"navigiert. Antworte kurz und ehrlich auf {names.german}: "
                 "Behaupte NICHT, dass die Karte bereits angepasst wurde oder "
                 "sich etwas geändert hat. Erkläre knapp, dass das gerade "
                 "nicht möglich war, und frage bei Bedarf nach mehr Details "
                 "(z. B. einem konkreten Ort oder einer Kartenebene)."
+                f"{directive}"
             )
 
         locations = aggregated.get("locations") or []
@@ -217,15 +246,17 @@ class TextResponseComponent:
                 f"Aufgelöste Informationen: {resolved}\n"
                 f"WICHTIG: Die gewünschte Einschränkung{where} konnte NICHT angewendet "
                 f"werden. Angezeigt wird die gesamte Ebene {what} ohne Filter. "
-                "Formuliere eine kurze, ehrliche deutsche Antwort: Sag klar, dass "
+                f"Formuliere eine kurze, ehrliche {names.adjective} Antwort: Sag klar, dass "
                 "nicht gefiltert werden konnte und die vollständige Ebene zu sehen "
                 "ist (die Karte zeigt aber auf das gewünschte Gebiet). Behaupte "
                 "NICHT, dass nur die gewünschten Objekte angezeigt werden."
+                f"{directive}"
             )
         return (
             f"{context_note}"
             f"Nutzeranfrage: \"{query}\"\n"
             f"Aufgelöste Informationen: {resolved}\n"
-            "Formuliere eine kurze, natürliche deutsche Antwort, die "
+            f"Formuliere eine kurze, natürliche {names.adjective} Antwort, die "
             "dem Nutzer mitteilt, was auf der Karte angezeigt wird."
+            f"{directive}"
         )

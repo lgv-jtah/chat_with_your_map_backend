@@ -23,6 +23,7 @@ from haystack.dataclasses import StreamingChunk
 from openai import OpenAI
 
 from cwym_agent import observability
+from cwym_agent.language import LANGUAGE_NAMES
 from cwym_agent.settings import Qwen3Settings
 from cwym_agent.sub_agents import SUB_AGENT_NAMES
 
@@ -30,12 +31,25 @@ logger = logging.getLogger(__name__)
 
 StreamingCallback = Callable[[StreamingChunk], None]
 
-_GENERATE_SYSTEM_PROMPT = (
+_ANSWER_SYSTEM_PROMPT = (
     "Du bist der Antwort-Agent von CWYM (Chat with your Map). Formuliere "
-    "eine kurze, freundliche und natürliche deutsche Antwort basierend "
+    "eine kurze, freundliche und natürliche {adjective} Antwort basierend "
     "auf den bereitgestellten Informationen. Antworte ausschließlich auf "
-    "Deutsch, ohne die interne Verarbeitung zu erwähnen."
+    "{name}, ohne die interne Verarbeitung zu erwähnen."
 )
+
+
+def answer_system_prompt(language: str) -> str:
+    """The system prompt for an answer in ``language`` (ISO 639-1)."""
+
+    names = LANGUAGE_NAMES[language]
+    return _ANSWER_SYSTEM_PROMPT.format(adjective=names.adjective, name=names.german)
+
+
+# Also used for the internal calls (layer query expansion and
+# disambiguation, filter condition extraction): they work on German data,
+# and "auf Deutsch" keeps the expansion's search terms German.
+_GENERATE_SYSTEM_PROMPT = answer_system_prompt("de")
 
 
 class _ToolCallAccumulator:
@@ -231,8 +245,10 @@ class Qwen3Client:
         streaming_callback: StreamingCallback | None = None,
         max_tokens: int | None = None,
         label: str = "generate",
+        system_prompt: str | None = None,
     ) -> str:
-        """Generate a German reply/short answer for the built prompt.
+        """Generate a reply/short answer for the built prompt (German
+        unless ``system_prompt`` says otherwise).
 
         Only the ``content`` stream is forwarded to ``streaming_callback``
         - the reasoning trace Qwen3 also produces for this step is
@@ -252,6 +268,8 @@ class Qwen3Client:
             shared by several different callers with very different
             prompts/budgets, so the generic "generate" default isn't
             enough on its own to tell them apart in the logs.
+        :param system_prompt: replaces the default German answer system
+            prompt, e.g. ``answer_system_prompt("en")`` for an English reply.
         """
 
         effective_max_tokens = max_tokens if max_tokens is not None else self.settings.max_tokens_generate
@@ -263,7 +281,7 @@ class Qwen3Client:
             stream = self._client.chat.completions.create(
                 model=self.settings.model,
                 messages=[
-                    {"role": "system", "content": _GENERATE_SYSTEM_PROMPT},
+                    {"role": "system", "content": system_prompt or _GENERATE_SYSTEM_PROMPT},
                     {"role": "user", "content": prompt},
                 ],
                 max_tokens=effective_max_tokens,

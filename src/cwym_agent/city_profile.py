@@ -27,6 +27,8 @@ from typing import Annotated, Literal
 import yaml
 from pydantic import AfterValidator, BaseModel, ConfigDict, Field, ValidationError, field_validator, model_validator
 
+from cwym_agent.language import SUPPORTED_LANGUAGES
+
 DEFAULT_PROFILE = "hamburg"
 PROFILE_ENV = "CWYM_CITY_PROFILE"
 PROFILES_DIR_ENV = "CWYM_PROFILES_DIR"
@@ -169,6 +171,11 @@ class CityProfile(_Strict):
                 raise ValueError(f"language codes must be two lowercase letters (ISO 639-1), got {code!r}")
         if len(set(v)) != len(v):
             raise ValueError("language codes must be unique")
+        unsupported = [code for code in v if code not in SUPPORTED_LANGUAGES]
+        if unsupported:
+            raise ValueError(
+                f"CWYM can't answer in {unsupported} yet (supported: {list(SUPPORTED_LANGUAGES)})"
+            )
         return v
 
     @field_validator("extent")
