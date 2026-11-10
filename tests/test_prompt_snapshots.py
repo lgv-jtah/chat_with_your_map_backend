@@ -20,7 +20,7 @@ from pathlib import Path
 import pytest
 
 from cwym_agent.city_profile import load_profile
-from cwym_agent.components.master_agent import MasterAgentComponent
+from cwym_agent.components.master_agent import MasterAgentComponent, plan_request
 from cwym_agent.components.text_response import TextResponseComponent
 from cwym_agent.geodata import clarification
 from cwym_agent.geodata.conversation_context import (
@@ -38,6 +38,7 @@ from cwym_agent.geodata.types import ActionMatch, FilterResult, LayerMatch, Loca
 from cwym_agent.llm.qwen3_client import Qwen3Client
 from cwym_agent.settings import Qwen3Settings
 
+_PROFILE = load_profile("hamburg")
 SNAPSHOT_DIR = Path(__file__).parent / "snapshots" / "prompts"
 UPDATE = os.environ.get("CWYM_UPDATE_SNAPSHOTS") == "1"
 
@@ -64,7 +65,7 @@ class _RecordingLlm:
         self.plan_prompts: list[str] = []
         self.generate_prompts: list[tuple[str, str]] = []
 
-    def plan(self, prompt: str, streaming_callback=None) -> dict:
+    def plan(self, prompt: str, *, system_prompt, tools, streaming_callback=None) -> dict:
         self.plan_prompts.append(prompt)
         return {"steps": []}
 
@@ -124,7 +125,7 @@ _FOLLOW_UP_CONTEXT = ConversationContext(
 class TestQwen3SystemPrompts:
     def test_plan_request(self):
         client, recorder = _qwen3_with_recorder()
-        client.plan("Zeig mir Schulen in Wandsbek")
+        MasterAgentComponent(_PROFILE, llm=client).run("Zeig mir Schulen in Wandsbek")
 
         call = recorder.calls[0]
         assert_snapshot("plan_request", _dump({"messages": call["messages"], "tools": call["tools"]}))
@@ -139,7 +140,7 @@ class TestQwen3SystemPrompts:
 class TestPlanningPrompt:
     def test_follow_up_with_map_state_and_history(self):
         llm = _RecordingLlm()
-        MasterAgentComponent(llm=llm).run(
+        MasterAgentComponent(_PROFILE, llm=llm).run(
             "Und wie sieht es dort mit Schulen aus?", context=_FOLLOW_UP_CONTEXT, layer_catalog=_CATALOG
         )
 
@@ -205,7 +206,7 @@ class TestLayerResolutionPrompts:
     def test_query_expansion_and_layer_selection(self):
         llm = _RecordingLlm(generate_reply="1")
         services = RealDataServices(
-            load_profile("hamburg"),
+            _PROFILE,
             locations=_Unused(),
             layer_search=_FakeLayerSearch(),
             filter_agent=_Unused(),
@@ -222,7 +223,9 @@ class TestLayerResolutionPrompts:
 class TestFilterPrompt:
     def test_condition_extraction(self):
         llm = _RecordingLlm(generate_reply="[]")
-        agent = FilterAgent(llm=llm, queryables_cache=_Unused(), wfs_client=_Unused())
+        agent = FilterAgent(
+            _PROFILE.prompt.area_terms, llm=llm, queryables_cache=_Unused(), wfs_client=_Unused()
+        )
         queryables = {
             "geom": {"x-ogc-role": "primary-geometry"},
             "name": {"type": "string"},
@@ -248,3 +251,79 @@ class TestFixedTexts:
 
 class _AnalysisWithoutAnswer:
     answer = None
+
+
+class TestOtherCity:
+    """Everything city-specific in the prompts comes from the profile: with
+    another city's profile, none of Hamburg's wording is left."""
+
+    _HAMBURG_WORDS = (
+        "Hamburg", "Wandsbek", "Altona", "StadtRAD", "Bike-Sharing",
+        "Niedersachsen", "Schleswig", "Stadtteil", "Bezirk",
+    )
+
+    @staticmethod
+    def _profile():
+        return _PROFILE.model_copy(
+            update={
+                "id": "teststadt",
+                "name": "Teststadt",
+                "official_name": "Freie Teststadt",
+                "prompt": _PROFILE.prompt.model_copy(
+                    update={
+                        "city_genitive": "Teststadts",
+                        "area_terms": ["Quartier", "Distrikt"],
+                        "example_places": ["Nordviertel", "Südhafen"],
+                        "neighbouring_regions": ["Umland"],
+                        "layer_example": _PROFILE.prompt.layer_example.model_copy(
+                            update={
+                                "term": "Leihräder",
+                                "layer_name": "RadLeih-Punkte",
+                                "official_term": "RadLeih",
+                                "official_term_reason": "das Teststädter Leihradsystem",
+                            }
+                        ),
+                    }
+                ),
+                "analysis_agent": _PROFILE.analysis_agent.model_copy(
+                    update={"example_question": "Wie viele RadLeih-Punkte gibt es im Nordviertel?"}
+                ),
+            }
+        )
+
+    def test_no_hamburg_wording_left(self):
+        profile = self._profile()
+        texts = []
+
+        client, recorder = _qwen3_with_recorder()
+        MasterAgentComponent(profile, llm=client).run("Zeig mir Spielplätze")
+        texts.append(_dump({"messages": recorder.calls[0]["messages"], "tools": recorder.calls[0]["tools"]}))
+
+        llm = _RecordingLlm(generate_reply="1")
+
+        class Candidates:
+            def search(self, query, allowed_layer_ids=None):
+                return [LayerMatch("Spielplätze", "1", 0.9), LayerMatch("Bolzplätze", "2", 0.5)]
+
+        RealDataServices(
+            profile, locations=_Unused(), layer_search=Candidates(), filter_agent=_Unused(), llm=llm,
+            udp_analysis=_Unused(),
+        ).resolve_layer("Spielplätze")
+        FilterAgent(profile.prompt.area_terms, llm=llm, queryables_cache=_Unused(), wfs_client=_Unused())._extract_conditions(
+            "Spielplätze mit Rutsche", {"ausstattung": {"type": "string"}}
+        )
+        texts += [prompt for _, prompt in llm.generate_prompts]
+
+        assert len(texts) == 4
+        for text in texts:
+            assert not [word for word in self._HAMBURG_WORDS if word in text], text
+        joined = "\n".join(texts)
+        for word in ("Teststadts", "Freie Teststadt", "Nordviertel", "Quartier, Distrikt", "Umland", "RadLeih"):
+            assert word in joined
+
+    def test_no_analysis_tool_without_analysis_agent(self):
+        profile = self._profile().model_copy(update={"analysis_agent": None})
+
+        names = [tool["function"]["name"] for tool in plan_request(profile)["tools"]]
+
+        assert "udp_analysis" not in names and "location_extractor" in names

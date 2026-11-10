@@ -42,6 +42,9 @@ class StubQwen3Generator:
     def plan(
         self,
         query: str,
+        *,
+        system_prompt: str = "",
+        tools: list[dict] | None = None,
         streaming_callback: StreamingCallback | None = None,
     ) -> dict:
         """Produce a canned execution plan plus a fake reasoning trace."""

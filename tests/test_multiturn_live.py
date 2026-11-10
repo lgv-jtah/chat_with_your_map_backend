@@ -67,7 +67,7 @@ def _run_turn(services: RealDataServices, query: str, context: ConversationConte
     from cwym_agent.components.master_agent import MasterAgentComponent
     from cwym_agent.components.result_aggregator import ResultAggregatorComponent
 
-    master_agent = MasterAgentComponent(llm=services.llm)
+    master_agent = MasterAgentComponent(services.profile, llm=services.llm)
     agent_executor = AgentExecutorComponent(data_services=services)
     aggregator = ResultAggregatorComponent()
     command_builder = CommandBuilderComponent()

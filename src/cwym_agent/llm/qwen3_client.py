@@ -24,21 +24,11 @@ from openai import OpenAI
 
 from cwym_agent import observability
 from cwym_agent.settings import Qwen3Settings
-from cwym_agent.sub_agents import SUB_AGENT_NAMES, as_openai_tools
+from cwym_agent.sub_agents import SUB_AGENT_NAMES
 
 logger = logging.getLogger(__name__)
 
 StreamingCallback = Callable[[StreamingChunk], None]
-
-_PLAN_SYSTEM_PROMPT = (
-    "Du bist der Planungs-Agent von CWYM (Chat with your Map), einem "
-    "Chatbot für Hamburgs Masterportal-Kartensystem. Analysiere die "
-    "deutsche Nutzeranfrage und rufe die passenden Werkzeuge auf, um "
-    "Ort, Kartenebene und/oder gewünschte Aktion aufzulösen. Rufe nur "
-    "die Werkzeuge auf, die für die Anfrage tatsächlich relevant sind. "
-    "Wenn die Anfrage keinen Bezug zur Karte hat (z.B. Small Talk), rufe "
-    "kein Werkzeug auf."
-)
 
 _GENERATE_SYSTEM_PROMPT = (
     "Du bist der Antwort-Agent von CWYM (Chat with your Map). Formuliere "
@@ -165,9 +155,16 @@ class Qwen3Client:
     def plan(
         self,
         query: str,
+        *,
+        system_prompt: str,
+        tools: list[dict],
         streaming_callback: StreamingCallback | None = None,
     ) -> dict:
         """Ask Qwen3 which sub-agents to call to resolve ``query``.
+
+        ``system_prompt`` and ``tools`` (OpenAI-style function
+        definitions) come from ``MasterAgentComponent``, which words them
+        for the deployment's city.
 
         Streams the model's reasoning trace into ``streaming_callback``
         as it arrives, and returns ``{"steps": [...]}`` built from
@@ -183,10 +180,10 @@ class Qwen3Client:
             stream = self._client.chat.completions.create(
                 model=self.settings.model,
                 messages=[
-                    {"role": "system", "content": _PLAN_SYSTEM_PROMPT},
+                    {"role": "system", "content": system_prompt},
                     {"role": "user", "content": query},
                 ],
-                tools=as_openai_tools(),
+                tools=tools,
                 tool_choice="auto",
                 max_tokens=self.settings.max_tokens_plan,
                 stream=True,

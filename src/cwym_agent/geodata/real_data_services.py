@@ -63,10 +63,10 @@ _DEFAULT_ACTION = "Zeigen"
 _LAYER_SELECTION_PROMPT_TEMPLATE = (
     "Du hilfst dabei, aus einer Liste von Kandidaten-Kartenebenen die am "
     "besten passende für eine Nutzeranfrage auszuwählen. Der Kontext ist "
-    "ausschließlich die Freie und Hansestadt Hamburg - bevorzuge Ebenen, "
-    "die sich auf Hamburg beziehen, gegenüber gleichnamigen Ebenen zu "
-    "anderen Bundesländern oder Regionen (z.B. Niedersachsen, "
-    "Schleswig-Holstein). Antworte NUR mit der Nummer der am besten "
+    "ausschließlich die {official_name} - bevorzuge Ebenen, "
+    "die sich auf {city} beziehen, gegenüber gleichnamigen Ebenen zu "
+    "anderen Bundesländern oder Regionen (z.B. {neighbouring_regions}). "
+    "Antworte NUR mit der Nummer der am besten "
     "passenden Ebene. Antworte mit 0, wenn keine der Ebenen wirklich "
     "passt.\n\n"
     "Anfrage: {query}\n\n"
@@ -75,11 +75,11 @@ _LAYER_SELECTION_PROMPT_TEMPLATE = (
 
 _QUERY_EXPANSION_PROMPT_TEMPLATE = (
     "Du hilfst dabei, für eine Nutzeranfrage passende Suchbegriffe für "
-    "Hamburgs offiziellen Geodaten-Katalog zu finden. Nenne bis zu 3 "
+    "{city_genitive} offiziellen Geodaten-Katalog zu finden. Nenne bis zu 3 "
     "mögliche offizielle Bezeichnungen, Markennamen oder Fachbegriffe, "
     "unter denen ein passender Datensatz dort tatsächlich geführt sein "
-    "könnte (z.B. \"StadtRAD\" für \"Fahrradstationen\", weil das "
-    "Hamburger Bike-Sharing-System offiziell so heißt). Antworte NUR mit "
+    "könnte (z.B. \"{official_term}\" für \"{term}\", weil "
+    "{official_term_reason} offiziell so heißt). Antworte NUR mit "
     "den Begriffen, kommagetrennt, ohne weitere Erklärung.\n\n"
     "Anfrage: {query}"
 )
@@ -140,7 +140,7 @@ class RealDataServices:
             build_layer_catalog_source(profile.layer_catalog, self.settings, http_client), self.settings
         )
         self.llm = llm if llm is not None else Qwen3Client()
-        self.filter_agent = filter_agent or FilterAgent(self.settings, llm=self.llm)
+        self.filter_agent = filter_agent or FilterAgent(profile.prompt.area_terms, self.settings, llm=self.llm)
         self.udp_analysis = udp_analysis or UdpAnalysisClient(profile.extent, self.settings)
 
         # The city itself. A city's address search typically indexes only
@@ -216,7 +216,14 @@ class RealDataServices:
         the original query alone.
         """
 
-        prompt = _QUERY_EXPANSION_PROMPT_TEMPLATE.format(query=query)
+        example = self.profile.prompt.layer_example
+        prompt = _QUERY_EXPANSION_PROMPT_TEMPLATE.format(
+            query=query,
+            city_genitive=self.profile.prompt.city_genitive,
+            official_term=example.official_term,
+            term=example.term,
+            official_term_reason=example.official_term_reason,
+        )
 
         try:
             reply = self.llm.generate(
@@ -234,7 +241,11 @@ class RealDataServices:
             return candidates[0]
 
         prompt = _LAYER_SELECTION_PROMPT_TEMPLATE.format(
-            query=query, candidates=_format_candidates(candidates)
+            query=query,
+            candidates=_format_candidates(candidates),
+            official_name=self.profile.official_name,
+            city=self.profile.name,
+            neighbouring_regions=", ".join(self.profile.prompt.neighbouring_regions),
         )
 
         try:

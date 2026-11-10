@@ -37,6 +37,7 @@ import json
 import logging
 import re
 import time
+from collections.abc import Sequence
 from typing import Any
 
 import httpx
@@ -59,7 +60,7 @@ _CONDITION_EXTRACTION_PROMPT_TEMPLATE = (
     "{{\"field\": <Feldname>, \"operator\": <eq|ne|lt|lte|gt|gte|contains>, "
     "\"value\": <Wert>}}. Verwende NUR Felder aus der obigen Liste. Sind "
     "zu einem Feld Beispielwerte angegeben, verwende den passenden Wert "
-    "genau so geschrieben. Ein Ortsname (Stadtteil, Bezirk) ist KEINE "
+    "genau so geschrieben. Ein Ortsname ({area_terms}) ist KEINE "
     "Attributbedingung - die räumliche Einschränkung erfolgt separat. Wenn "
     "die Anfrage keine konkrete Attributbedingung nennt (z.B. nur einen "
     "Ort), antworte mit einem leeren Array: []"
@@ -225,12 +226,18 @@ class FilterAgent:
 
     def __init__(
         self,
+        area_terms: Sequence[str],
         settings: GeodataSettings | None = None,
         llm: Any = None,
         http_client: httpx.Client | None = None,
         queryables_cache: QueryablesCache | None = None,
         wfs_client: WfsClient | None = None,
     ):
+        """:param area_terms: the city's words for its areas (profile
+        ``prompt.area_terms``) - the condition extraction is told that
+        place names are not attribute conditions."""
+
+        self.area_terms = ", ".join(area_terms)
         self.settings = settings or GeodataSettings()
         if llm is None:
             from cwym_agent.llm.qwen3_client import Qwen3Client
@@ -427,7 +434,7 @@ class FilterAgent:
             for name, schema in queryables.items()
             if schema.get("x-ogc-role") != "primary-geometry"
         )
-        prompt = _CONDITION_EXTRACTION_PROMPT_TEMPLATE.format(fields=fields, query=query)
+        prompt = _CONDITION_EXTRACTION_PROMPT_TEMPLATE.format(fields=fields, query=query, area_terms=self.area_terms)
 
         try:
             reply = self.llm.generate(

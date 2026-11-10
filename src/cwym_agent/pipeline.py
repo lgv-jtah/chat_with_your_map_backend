@@ -70,7 +70,7 @@ def build_pipeline(
 
     pipeline = Pipeline(metadata={"city_profile": profile.id})
 
-    pipeline.add_component("master_agent", MasterAgentComponent(llm=llm))
+    pipeline.add_component("master_agent", MasterAgentComponent(profile, llm=llm))
     pipeline.add_component("agent_executor", AgentExecutorComponent(data_services=data_services))
     pipeline.add_component("result_aggregator", ResultAggregatorComponent())
     pipeline.add_component("command_builder", CommandBuilderComponent())

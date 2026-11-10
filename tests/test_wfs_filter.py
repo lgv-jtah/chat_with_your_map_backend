@@ -194,7 +194,7 @@ def _agent(server: _FakeWfsServer, llm_reply: str, limit: int = 500) -> FilterAg
 
     client = httpx.Client(transport=httpx.MockTransport(server.handler))
     settings = GeodataSettings(filter_result_limit=limit)
-    agent = FilterAgent(settings=settings, llm=_LLM(), http_client=client)
+    agent = FilterAgent(["Stadtteil", "Bezirk"], settings=settings, llm=_LLM(), http_client=client)
     return agent
 
 

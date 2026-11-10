@@ -107,6 +107,41 @@ class AnalysisAgentConfig(_Strict):
     environment variables (CWYM_UDP_AGENT_*), they differ per environment."""
 
     adapter: Literal["udp"]
+    example_question: str = Field(min_length=1)
+    """An analytical question about this city's data, shown to the planner
+    in the tool description."""
+
+
+class LayerExample(_Strict):
+    """A colloquial term whose official layer has a different name - the
+    example that teaches the planner and the layer search's query
+    expansion what to do."""
+
+    term: str = Field(min_length=1)
+    """What a user says, e.g. "Fahrradstationen"."""
+    layer_name: str = Field(min_length=1)
+    """The official layer name, e.g. "StadtRAD-Stationen Hamburg"."""
+    official_term: str = Field(min_length=1)
+    """The official term to search for, e.g. "StadtRAD"."""
+    official_term_reason: str = Field(min_length=1)
+    """Completes "weil ... offiziell so heißt", e.g. "das Hamburger
+    Bike-Sharing-System"."""
+
+
+class PromptConfig(_Strict):
+    """City-specific wording in the prompts and tool descriptions (German)."""
+
+    city_genitive: str = Field(min_length=1)
+    """e.g. "Hamburgs" ("Hamburgs Geodaten-Katalog")."""
+    area_terms: list[str] = Field(min_length=1)
+    """Words for the city's areas, most common first, e.g. ["Stadtteil",
+    "Bezirk"]."""
+    example_places: list[str] = Field(min_length=2)
+    """Place names for examples, e.g. ["Wandsbek", "Altona"]."""
+    neighbouring_regions: list[str] = Field(min_length=1)
+    """Regions whose same-named layers the layer selection must not
+    prefer, e.g. ["Niedersachsen", "Schleswig-Holstein"]."""
+    layer_example: LayerExample
 
 
 class CityProfile(_Strict):
@@ -122,6 +157,7 @@ class CityProfile(_Strict):
     geocoder: GeocoderConfig
     layer_catalog: LayerCatalogConfig
     boundaries: BoundariesConfig
+    prompt: PromptConfig
     analysis_agent: AnalysisAgentConfig | None = None
     """None: the city has no tier 2 analysis agent."""
 

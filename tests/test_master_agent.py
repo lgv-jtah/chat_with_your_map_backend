@@ -1,17 +1,20 @@
 """Unit tests for ``MasterAgentComponent``'s context-aware prompt
 building (cmym-agent-architecture.md Section 10.5)."""
 
+from cwym_agent.city_profile import load_profile
 from cwym_agent.components.master_agent import MasterAgentComponent
 from cwym_agent.geodata.conversation_context import ConversationContext, MapStateIn
 from cwym_agent.geodata.portal_catalog_resolver import LayerCatalog
 from cwym_agent.geodata.types import LayerMatch
+
+_PROFILE = load_profile("hamburg")
 
 
 class _RecordingLlm:
     def __init__(self):
         self.prompts: list[str] = []
 
-    def plan(self, prompt: str, streaming_callback=None):
+    def plan(self, prompt: str, *, system_prompt, tools, streaming_callback=None):
         self.prompts.append(prompt)
         return {"steps": []}
 
@@ -19,7 +22,7 @@ class _RecordingLlm:
 class TestBuildPlanningPrompt:
     def test_no_context_leaves_query_untouched(self):
         llm = _RecordingLlm()
-        component = MasterAgentComponent(llm=llm)
+        component = MasterAgentComponent(_PROFILE, llm=llm)
 
         component.run("Wo finde ich Schulen?")
 
@@ -31,7 +34,7 @@ class TestBuildPlanningPrompt:
         not an empty '## Aktueller Kartenzustand' header."""
 
         llm = _RecordingLlm()
-        component = MasterAgentComponent(llm=llm)
+        component = MasterAgentComponent(_PROFILE, llm=llm)
         context = ConversationContext(map_state=MapStateIn(), history=[])
 
         component.run("Wo finde ich Schulen?", context=context)
@@ -40,7 +43,7 @@ class TestBuildPlanningPrompt:
 
     def test_active_layer_and_history_are_prepended(self):
         llm = _RecordingLlm()
-        component = MasterAgentComponent(llm=llm)
+        component = MasterAgentComponent(_PROFILE, llm=llm)
         context = ConversationContext(
             map_state=MapStateIn(active_layer_ids=["1732"]),
             history=[("user", "wo finde ich alle Schulen"), ("assistant", "Ich zeige dir Schulen.")],
@@ -62,7 +65,7 @@ class TestBuildPlanningPrompt:
         prompt."""
 
         llm = _RecordingLlm()
-        component = MasterAgentComponent(llm=llm)
+        component = MasterAgentComponent(_PROFILE, llm=llm)
         context = ConversationContext(map_state=MapStateIn(active_layer_ids=["1732"]), history=[])
 
         result = component.run("Kontaktformular öffnen", context=context)

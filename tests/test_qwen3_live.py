@@ -11,6 +11,8 @@ import os
 
 import pytest
 
+from cwym_agent.city_profile import load_profile
+from cwym_agent.components.master_agent import plan_request
 from cwym_agent.llm.qwen3_client import Qwen3Client
 from cwym_agent.settings import Qwen3Settings
 
@@ -30,6 +32,7 @@ def test_plan_resolves_location_and_layer_tools(client: Qwen3Client):
 
     result = client.plan(
         "Zeige mir Fahrradstationen in Altona",
+        **plan_request(load_profile("hamburg")),
         streaming_callback=lambda chunk: reasoning_chunks.append(chunk.content),
     )
 

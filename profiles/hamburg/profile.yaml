@@ -4,9 +4,7 @@
 # src/cwym_agent/city_profile.py, architecture: cmym-agent-architecture.md
 # Section 14.3.
 #
-# CHAT-3: these values mirror what is still hard-coded in the code (checked by
-# tests/test_city_profile.py). CHAT-5 makes the components read them from
-# here. Environment variables (CWYM_*_URL etc.) keep overriding endpoints.
+# Environment variables (CWYM_*_URL) override the endpoints.
 
 id: hamburg
 name: Hamburg
@@ -50,6 +48,21 @@ boundaries:
     bezirk: {collection: bezirke, name_field: bezirk_name}
     stadtteil: {collection: stadtteile, name_field: stadtteil_name}
 
+# Wording for the prompts and tool descriptions (German).
+prompt:
+  city_genitive: Hamburgs
+  area_terms: [Stadtteil, Bezirk]
+  example_places: [Wandsbek, Altona]
+  neighbouring_regions: [Niedersachsen, Schleswig-Holstein]
+  # "Fahrradstationen" shares no words with its layer, and embedding search
+  # alone ranks "Fahrradluftstationen" higher - see real_data_services.py.
+  layer_example:
+    term: Fahrradstationen
+    layer_name: StadtRAD-Stationen Hamburg
+    official_term: StadtRAD
+    official_term_reason: das Hamburger Bike-Sharing-System
+
 # Tier 2: Hamburg's Urban Data Platform agent (endpoint: CWYM_UDP_AGENT_URL).
 analysis_agent:
   adapter: udp
+  example_question: Wie viele StadtRAD-Stationen gibt es in Altona?

@@ -20,6 +20,7 @@ from cwym_agent.llm.qwen3_client import Qwen3Client
 from cwym_agent.settings import Qwen3Settings
 
 _BASE_URL = "http://test-vllm.invalid/v1"
+_PLAN = {"system_prompt": "Plane.", "tools": []}
 _MODEL = "Qwen/Qwen3.8-27B"
 
 
@@ -105,6 +106,7 @@ class TestPlan:
         reasoning_chunks: list[str] = []
         result = client.plan(
             "Zeige Fahrradstationen in Altona",
+            **_PLAN,
             streaming_callback=lambda chunk: reasoning_chunks.append(chunk.content),
         )
 
@@ -125,7 +127,7 @@ class TestPlan:
         )
 
         client = _client_for(body)
-        result = client.plan("navigiere nach Altona")
+        result = client.plan("navigiere nach Altona", **_PLAN)
 
         assert result == {
             "steps": [{"agent_name": "action_detector", "args": {"query": "navigiere"}}]
@@ -138,7 +140,7 @@ class TestPlan:
         )
 
         client = _client_for(body)
-        result = client.plan("irgendeine Anfrage")
+        result = client.plan("irgendeine Anfrage", **_PLAN)
 
         assert result == {
             "steps": [{"agent_name": "location_extractor", "args": {"query": "Altona"}}]
@@ -150,7 +152,7 @@ class TestPlan:
         )
 
         client = _client_for(body)
-        result = client.plan("irgendeine Anfrage")
+        result = client.plan("irgendeine Anfrage", **_PLAN)
 
         assert result == {"steps": []}
 
@@ -162,7 +164,7 @@ class TestPlan:
         )
 
         client = _client_for(body)
-        result = client.plan("Hallo, wie geht's?")
+        result = client.plan("Hallo, wie geht's?", **_PLAN)
 
         assert result == {"steps": []}
 
@@ -202,7 +204,7 @@ class TestUsageLogging:
         client = _client_for(body)
 
         with caplog.at_level("INFO", logger="cwym_agent.llm.qwen3_client"):
-            client.plan("Zeige Fahrradstationen in Altona")
+            client.plan("Zeige Fahrradstationen in Altona", **_PLAN)
 
         [record] = [r for r in caplog.records if r.name == "cwym_agent.llm.qwen3_client"]
         assert record.levelname == "INFO"
@@ -280,7 +282,7 @@ class TestRunTraceRecording:
         client = _client_for(body)
         context, trace = self._traced()
 
-        result = context.run(client.plan, "irgendeine Anfrage")
+        result = context.run(lambda: client.plan("irgendeine Anfrage", **_PLAN))
 
         assert result == {"steps": []}
         [call] = trace.llm_calls
