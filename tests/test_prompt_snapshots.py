@@ -19,6 +19,7 @@ from pathlib import Path
 
 import pytest
 
+from cwym_agent.city_profile import load_profile
 from cwym_agent.components.master_agent import MasterAgentComponent
 from cwym_agent.components.text_response import TextResponseComponent
 from cwym_agent.geodata import clarification
@@ -204,7 +205,8 @@ class TestLayerResolutionPrompts:
     def test_query_expansion_and_layer_selection(self):
         llm = _RecordingLlm(generate_reply="1")
         services = RealDataServices(
-            address_resolver=_Unused(),
+            load_profile("hamburg"),
+            locations=_Unused(),
             layer_search=_FakeLayerSearch(),
             filter_agent=_Unused(),
             llm=llm,

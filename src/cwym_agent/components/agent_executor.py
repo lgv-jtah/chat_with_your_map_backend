@@ -11,15 +11,13 @@ provided.
 import logging
 import time
 from dataclasses import asdict, is_dataclass, replace
-from typing import Any
-
 from haystack import component
 
 from cwym_agent import observability
 from cwym_agent.bridge import AGUIEventBridge
 from cwym_agent.geodata.conversation_context import ConversationContext
 from cwym_agent.geodata.portal_catalog_resolver import LayerCatalog
-from cwym_agent.geodata.real_data_services import RealDataServices
+from cwym_agent.geodata.interfaces import DataServices
 from cwym_agent.geodata.types import FilterCondition, LayerMatch
 
 logger = logging.getLogger(__name__)
@@ -124,8 +122,8 @@ def _with_portal_details(layer: LayerMatch, portal_layer: LayerMatch | None) -> 
 
 @component
 class AgentExecutorComponent:
-    def __init__(self, data_services: Any | None = None):
-        self.data_services = data_services if data_services is not None else RealDataServices()
+    def __init__(self, data_services: DataServices):
+        self.data_services = data_services
 
     @component.output_types(execution_log=list)
     def run(

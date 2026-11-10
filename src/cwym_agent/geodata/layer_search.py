@@ -1,11 +1,9 @@
-"""Hybrid semantic search over Hamburg's Masterportal map layer catalog.
+"""Hybrid semantic search over a city's map layer catalog.
 
-Fetches the full layer catalog from Hamburg's public, unauthenticated
-Elasticsearch endpoint (``https://geodienste.hamburg.de/layers/_search``,
-~6,500 layers as of writing) and serves hybrid BM25 + embedding
-retrieval, cross-encoder reranked, semantic search over it - so loose
-German terms like "Fahrradstationen" resolve to the correct official
-layer name ("StadtRAD-Stationen Hamburg").
+Indexes the documents of the city's ``LayerCatalogSource`` (thousands of
+layers) and serves hybrid BM25 + embedding retrieval, cross-encoder
+reranked, semantic search over them - so loose terms like
+"Fahrradstationen" find the official layer name among the candidates.
 
 This mirrors the retrieval pattern used by the sister `udp-chatbot`
 project's `mcp_server/search.py` (hybrid BM25 + embedding retrieval,
@@ -16,10 +14,8 @@ whole extra service just for this.
 """
 
 import logging
-import time
 from collections.abc import Collection
 
-import httpx
 from haystack import Document, Pipeline
 from haystack.components.joiners import DocumentJoiner
 from haystack.components.retrievers.in_memory import InMemoryBM25Retriever, InMemoryEmbeddingRetriever
@@ -30,6 +26,7 @@ from haystack_integrations.components.embedders.sentence_transformers import (
 )
 from haystack_integrations.components.rankers.sentence_transformers import SentenceTransformersSimilarityRanker
 
+from cwym_agent.geodata.interfaces import LayerCatalogSource
 from cwym_agent.geodata.settings import GeodataSettings
 from cwym_agent.geodata.types import LayerMatch
 
@@ -47,125 +44,33 @@ def _layer_id_filter(allowed_layer_ids: Collection[str] | None) -> dict | None:
     return {"field": "meta.layer_id", "operator": "in", "value": [str(i) for i in allowed_layer_ids]}
 
 
-def fetch_layer_documents(
-    settings: GeodataSettings, http_client: httpx.Client | None = None
-) -> list[Document]:
-    """Fetch the full Hamburg layer catalog and convert it to Documents.
-
-    Retries on transient failures (this endpoint has been observed to
-    intermittently time out, seemingly unrelated to payload size - some
-    requests complete in under a second, others hang until the client
-    timeout) since this fetch happens once at application startup and a
-    single flaky request shouldn't crash the whole app.
-    """
-
-    client = http_client or httpx.Client(timeout=settings.timeout)
-    attempts = max(1, settings.layer_fetch_retries)
-
-    last_exc: httpx.HTTPError | None = None
-    for attempt in range(1, attempts + 1):
-        try:
-            response = client.get(
-                settings.layer_search_url,
-                params={"q": "*:*", "size": settings.layer_fetch_size},
-            )
-            response.raise_for_status()
-            es_results = response.json()
-            break
-        except httpx.HTTPError as exc:
-            last_exc = exc
-            logger.warning(
-                "Layer catalog fetch attempt %d/%d failed (%s); %s",
-                attempt,
-                attempts,
-                exc,
-                "retrying" if attempt < attempts else "giving up",
-            )
-            if attempt < attempts:
-                time.sleep(settings.layer_fetch_retry_backoff)
-    else:
-        assert last_exc is not None
-        raise last_exc
-
-    hits = es_results.get("hits", {}).get("hits", [])
-
-    documents = []
-    for hit in hits:
-        doc = _hit_to_document(hit.get("_source") or {})
-        if doc is not None:
-            documents.append(doc)
-
-    return documents
-
-
-def _hit_to_document(source: dict) -> Document | None:
-    layer_id = source.get("id")
-    layer_name = source.get("name")
-    if layer_id is None or not layer_name:
-        return None
-
-    content_parts = [
-        f"Layer: {layer_name}",
-        f"ID: {layer_id}",
-        f"Typ: {source.get('typ', 'Unbekannt')}",
-    ]
-
-    short_description = ""
-    datasets = source.get("datasets") or []
-    if datasets:
-        dataset = datasets[0]
-        if dataset.get("md_name"):
-            content_parts.append(f"Metadatenname: {dataset['md_name']}")
-        if dataset.get("description"):
-            description = dataset["description"]
-            content_parts.append(f"Beschreibung: {description}")
-            # A short excerpt for LLM disambiguation prompts - the full
-            # description is often several paragraphs of licensing/technical
-            # detail that would bloat those prompts unnecessarily.
-            short_description = description.strip().split("\n")[0][:200]
-        keywords = dataset.get("keywords") or []
-        if keywords:
-            content_parts.append(f"Schlagwörter: {', '.join(keywords)}")
-
-    content = "\n".join(content_parts)
-
-    return Document(
-        content=content,
-        meta={
-            "layer_id": str(layer_id),
-            "layer_name": layer_name,
-            "typ": source.get("typ"),
-            "url": source.get("url"),
-            "collection": source.get("collection"),
-            "short_description": short_description,
-        },
-    )
-
-
 class LayerSearchService:
-    """Hybrid BM25 + semantic search over Hamburg's map layer catalog."""
+    """Hybrid BM25 + semantic search over a city's map layer catalog."""
 
     def __init__(
         self,
+        source: LayerCatalogSource | None = None,
         settings: GeodataSettings | None = None,
-        http_client: httpx.Client | None = None,
         documents: list[Document] | None = None,
     ):
         """
+        :param source: where the catalog comes from (fetched on warm-up).
         :param documents: Pre-fetched layer documents to index instead of
-            fetching them from the live endpoint - used by tests to
-            avoid depending on network access.
+            fetching them from ``source`` - used by tests to avoid
+            depending on network access.
         """
 
+        if source is None and documents is None:
+            raise ValueError("LayerSearchService needs a catalog source or documents")
+        self.source = source
         self.settings = settings or GeodataSettings()
-        self._http_client = http_client
         self._preloaded_documents = documents
         self._pipeline: Pipeline | None = None
 
     def warm_up(self) -> None:
         """Fetch the layer catalog, embed it, and build the search pipeline.
 
-        Expensive (one HTTP fetch of ~6,500 documents + embedding all of
+        Expensive (one fetch of thousands of documents + embedding all of
         them) - call once, e.g. at application startup, not per request.
         Idempotent: safe to call more than once.
         """
@@ -175,12 +80,10 @@ class LayerSearchService:
 
         documents = self._preloaded_documents
         if documents is None:
-            logger.info(
-                "Fetching Hamburg layer catalog from %s ...", self.settings.layer_search_url
-            )
-            documents = fetch_layer_documents(self.settings, http_client=self._http_client)
+            assert self.source is not None
+            documents = self.source.fetch_documents()
         logger.info(
-            "Embedding %d Hamburg layer documents with %s - this takes a few "
+            "Embedding %d layer documents with %s - this takes a few "
             "minutes on CPU (first run also downloads the model) ...",
             len(documents),
             self.settings.layer_embed_model,
@@ -235,7 +138,7 @@ class LayerSearchService:
 
         Returns a broader candidate pool (``layer_result_top_k``, default
         15) rather than a single best guess: text/embedding similarity
-        alone cannot reliably bridge colloquial terms to official Hamburg
+        alone cannot reliably bridge colloquial terms to official
         brand names with no lexical overlap (e.g. "Fahrradstationen" vs.
         "StadtRAD") - see ``RealDataServices._select_layer_with_llm``,
         which disambiguates the final choice among these candidates using
@@ -243,7 +146,7 @@ class LayerSearchService:
 
         :param allowed_layer_ids: when given, restricts retrieval to
             these layer ids (``PortalCatalogResolver``, Section 8) rather
-            than searching the full Hamburg-wide index.
+            than searching the full city-wide index.
         """
 
         self.warm_up()

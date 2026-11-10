@@ -16,19 +16,24 @@ def _env_int(name: str, default: int) -> int:
     return int(os.environ.get(name, str(default)))
 
 
+def _env_str_or_none(name: str) -> str | None:
+    return os.environ.get(name, "").strip() or None
+
+
 def _env_bool(name: str, default: bool) -> bool:
     return os.environ.get(name, str(default)).strip().lower() in ("1", "true", "yes")
 
 
 @dataclass(frozen=True)
 class GeodataSettings:
-    """Connection/search settings for Hamburg's public geodata APIs."""
+    """Connection/search settings for the geodata services.
 
-    layer_search_url: str = field(
-        default_factory=lambda: os.environ.get(
-            "CWYM_LAYER_SEARCH_URL", "https://geodienste.hamburg.de/layers/_search"
-        )
-    )
+    The endpoint URLs default to None: the city profile provides them
+    (``cwym_agent.geodata.adapters``). Setting the environment variable
+    overrides the profile's URL.
+    """
+
+    layer_search_url: str | None = field(default_factory=lambda: _env_str_or_none("CWYM_LAYER_SEARCH_URL"))
     layer_embed_model: str = field(
         default_factory=lambda: os.environ.get(
             "CWYM_LAYER_EMBED_MODEL", "sentence-transformers/all-MiniLM-L6-v2"
@@ -66,18 +71,10 @@ class GeodataSettings:
         default_factory=lambda: _env_int("CWYM_LAYER_LLM_MAX_TOKENS", 2048)
     )
 
-    address_search_url: str = field(
-        default_factory=lambda: os.environ.get(
-            "CWYM_ADDRESS_SEARCH_URL", "https://api.hamburg.de/addr_search"
-        )
-    )
-    # Official borough/district outlines (OGC API Features) - replace the
-    # address search's bounding rectangles (see area_boundaries.py).
-    area_boundaries_url: str = field(
-        default_factory=lambda: os.environ.get(
-            "CWYM_AREA_BOUNDARIES_URL", "https://api.hamburg.de/datasets/v1/verwaltungsgrenzen"
-        )
-    )
+    address_search_url: str | None = field(default_factory=lambda: _env_str_or_none("CWYM_ADDRESS_SEARCH_URL"))
+    # Official area outlines (OGC API Features) - replace the address
+    # search's bounding rectangles (see adapters/ogc_api_features.py).
+    area_boundaries_url: str | None = field(default_factory=lambda: _env_str_or_none("CWYM_AREA_BOUNDARIES_URL"))
     address_result_size: int = field(
         default_factory=lambda: _env_int("CWYM_ADDRESS_RESULT_SIZE", 20)
     )

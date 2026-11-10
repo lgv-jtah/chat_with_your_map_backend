@@ -1,6 +1,6 @@
 """Unit tests for ``RealDataServices``.
 
-Uses a fake ``layer_search``/``address_resolver`` double (so retrieval
+Uses a fake ``layer_search``/``locations`` double (so retrieval
 quality itself isn't exercised here - that's ``test_layer_search.py`` +
 the opt-in live test) and a ``Qwen3Client`` mocked via
 ``httpx2.MockTransport`` (same approach as ``test_qwen3_client.py``) to
@@ -13,6 +13,7 @@ import json
 
 import httpx2
 
+from cwym_agent.city_profile import load_profile
 from cwym_agent.geodata.real_data_services import RealDataServices
 from cwym_agent.geodata.types import HAMBURG_EXTENT
 from cwym_agent.geodata.types import ActionMatch, LayerMatch, LocationMatch
@@ -34,7 +35,7 @@ class FakeLayerSearch:
         return self.results_by_query.get(query, [])
 
 
-class FakeAddressResolver:
+class FakeLocations:
     def __init__(self, result: LocationMatch | None):
         self.result = result
         self.queries: list[str] = []
@@ -42,6 +43,15 @@ class FakeAddressResolver:
     def resolve(self, query: str) -> LocationMatch | None:
         self.queries.append(query)
         return self.result
+
+
+_PROFILE = load_profile("hamburg")
+
+
+def _service(**kwargs) -> RealDataServices:
+    kwargs.setdefault("locations", FakeLocations(None))
+    kwargs.setdefault("layer_search", FakeLayerSearch({}))
+    return RealDataServices(_PROFILE, **kwargs)
 
 
 def _sse_text_response(text: str) -> str:
@@ -89,7 +99,7 @@ class TestResolveLayer:
         # disambiguation among the merged [wrong, right] candidates -> "2".
         llm = _mock_llm(["StadtRAD", "2"])
 
-        service = RealDataServices(layer_search=layer_search, llm=llm)
+        service = _service(layer_search=layer_search, llm=llm)
         result = service.resolve_layer("Fahrradstationen")
 
         assert result == right_match
@@ -101,7 +111,7 @@ class TestResolveLayer:
         layer_search = FakeLayerSearch({"Fahrradstationen": [match]})
         llm = _mock_llm([""])  # no expansion terms; single candidate, no disambiguation
 
-        service = RealDataServices(layer_search=layer_search, llm=llm)
+        service = _service(layer_search=layer_search, llm=llm)
         service.resolve_layer("Fahrradstationen", allowed_layer_ids={"27764", "18105"})
 
         assert layer_search.allowed_layer_ids_seen == [{"27764", "18105"}]
@@ -111,7 +121,7 @@ class TestResolveLayer:
         layer_search = FakeLayerSearch({"Fahrradstationen": [match]})
         llm = _mock_llm([""])
 
-        service = RealDataServices(layer_search=layer_search, llm=llm)
+        service = _service(layer_search=layer_search, llm=llm)
         service.resolve_layer("Fahrradstationen")
 
         assert layer_search.allowed_layer_ids_seen == [None]
@@ -120,7 +130,7 @@ class TestResolveLayer:
         layer_search = FakeLayerSearch({})
         llm = _mock_llm([""])
 
-        service = RealDataServices(layer_search=layer_search, llm=llm)
+        service = _service(layer_search=layer_search, llm=llm)
 
         assert service.resolve_layer("nichts passendes") is None
 
@@ -131,7 +141,7 @@ class TestResolveLayer:
         # should be needed/made since there's only one candidate.
         llm = _mock_llm([""])
 
-        service = RealDataServices(layer_search=layer_search, llm=llm)
+        service = _service(layer_search=layer_search, llm=llm)
         result = service.resolve_layer("Krankenhäuser")
 
         assert result == only_match
@@ -142,7 +152,7 @@ class TestResolveLayer:
         layer_search = FakeLayerSearch({"query": [a, b]})
         llm = _mock_llm(["", "0"])
 
-        service = RealDataServices(layer_search=layer_search, llm=llm)
+        service = _service(layer_search=layer_search, llm=llm)
         result = service.resolve_layer("query")
 
         assert result is None
@@ -153,7 +163,7 @@ class TestResolveLayer:
         layer_search = FakeLayerSearch({"query": [a, b]})
         llm = _mock_llm(["", "not a number"])
 
-        service = RealDataServices(layer_search=layer_search, llm=llm)
+        service = _service(layer_search=layer_search, llm=llm)
         result = service.resolve_layer("query")
 
         assert result == a
@@ -164,7 +174,7 @@ class TestResolveLayer:
         layer_search = FakeLayerSearch({"query": [low, high]})
         llm = _mock_llm([""])  # single candidate after dedup -> no disambiguation call
 
-        service = RealDataServices(layer_search=layer_search, llm=llm)
+        service = _service(layer_search=layer_search, llm=llm)
         result = service.resolve_layer("query")
 
         assert result == high
@@ -172,30 +182,24 @@ class TestResolveLayer:
 
 class TestResolveLocations:
     def test_bare_hamburg_query_uses_default_without_calling_resolver(self):
-        address_resolver = FakeAddressResolver(LocationMatch("Hamburg-Harburg", 1.0, 2.0, 0.9))
-        service = RealDataServices(
-            address_resolver=address_resolver, layer_search=FakeLayerSearch({})
-        )
+        locations = FakeLocations(LocationMatch("Hamburg-Harburg", 1.0, 2.0, 0.9))
+        service = _service(locations=locations)
 
         result = service.resolve_locations("Hamburg")
 
         assert result == [LocationMatch("Hamburg", 53.5511, 9.9937, 0.9, extent=HAMBURG_EXTENT)]
-        assert address_resolver.queries == []
+        assert locations.queries == []
 
     def test_resolved_match_is_returned(self):
         match = LocationMatch("Wandsbek", 53.6, 10.1, 0.8)
-        address_resolver = FakeAddressResolver(match)
-        service = RealDataServices(
-            address_resolver=address_resolver, layer_search=FakeLayerSearch({})
-        )
+        locations = FakeLocations(match)
+        service = _service(locations=locations)
 
         assert service.resolve_locations("Wandsbek") == [match]
 
     def test_unresolved_query_falls_back_to_default_hamburg_location(self):
-        address_resolver = FakeAddressResolver(None)
-        service = RealDataServices(
-            address_resolver=address_resolver, layer_search=FakeLayerSearch({})
-        )
+        locations = FakeLocations(None)
+        service = _service(locations=locations)
 
         result = service.resolve_locations("kompletter nonsens")
 
@@ -204,17 +208,13 @@ class TestResolveLocations:
 
 class TestDetectAction:
     def test_keyword_matches(self):
-        service = RealDataServices(
-            address_resolver=FakeAddressResolver(None), layer_search=FakeLayerSearch({})
-        )
+        service = _service(locations=FakeLocations(None))
 
         assert service.detect_action("Navigiere nach Altona") == ActionMatch("Navigieren", 0.9)
         assert service.detect_action("Filtere die Ergebnisse") == ActionMatch("Filter", 0.9)
         assert service.detect_action("Öffne die Karte") == ActionMatch("Öffne", 0.9)
 
     def test_default_action(self):
-        service = RealDataServices(
-            address_resolver=FakeAddressResolver(None), layer_search=FakeLayerSearch({})
-        )
+        service = _service(locations=FakeLocations(None))
 
         assert service.detect_action("Zeige mir Fahrradstationen") == ActionMatch("Zeigen", 0.85)

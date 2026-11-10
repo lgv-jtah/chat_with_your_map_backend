@@ -15,7 +15,7 @@ import os
 import httpx
 import pytest
 
-from cwym_agent.geodata.address_resolver import AddressResolver
+from cwym_agent.city_profile import load_profile
 from cwym_agent.geodata.real_data_services import RealDataServices
 from cwym_agent.geodata.types import LayerMatch
 
@@ -27,7 +27,7 @@ pytestmark = pytest.mark.skipif(
 
 @pytest.fixture(scope="module")
 def real_data_services() -> RealDataServices:
-    service = RealDataServices()
+    service = RealDataServices(load_profile("hamburg"))
     service.warm_up()
     return service
 
@@ -58,8 +58,8 @@ def test_kindergarten_term_resolves_to_hamburg_not_neighboring_state(
     assert "schleswig" not in result.name.lower()
 
 
-def test_district_names_resolve_to_district_center_not_a_street():
-    resolver = AddressResolver()
+def test_district_names_resolve_to_district_center_not_a_street(real_data_services: RealDataServices):
+    resolver = real_data_services.locations
 
     wandsbek = resolver.resolve("Wandsbek")
     assert wandsbek is not None
@@ -106,10 +106,10 @@ def test_filter_agent_spatial_predicate_narrows_to_district(
     covered by the other tests in this file.
 
     Asserts a strict narrowing (some hospitals, but fewer than the
-    citywide total) rather than an exact count: AddressResolver's
+    citywide total) rather than an exact count: the geocoder's
     "Wandsbek" match is the Bezirk (borough), not the smaller
     Stadtteil of the same name - a real, pre-existing characteristic
-    of AddressResolver's own district-selection logic, unrelated to
+    of the geocoder's own district-selection logic, unrelated to
     FilterAgent - so the exact count isn't a stable thing to pin a
     test to."""
 

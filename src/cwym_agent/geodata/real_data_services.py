@@ -1,10 +1,10 @@
-"""Real implementation of ``StubDataServices``'s interface.
+"""``RealDataServices``: the ``DataServices`` the pipeline runs with.
 
-Combines ``AddressResolver`` (location -> coordinates) and
-``LayerSearchService`` (loose term -> official layer name) behind the
-same ``resolve_locations``/``resolve_layer``/``detect_action`` interface
-``AgentExecutorComponent`` already calls, so it needs no changes to use
-either implementation.
+Combines ``LocationResolver`` (place -> coordinates and outline) and
+``LayerSearchService`` (loose term -> official layer name), both fed by
+the city's data source adapters, plus ``FilterAgent`` and the analysis
+agent, behind the ``DataServices`` interface ``AgentExecutorComponent``
+calls.
 
 Layer resolution needs two LLM-assisted steps on top of
 ``LayerSearchService``'s retrieval, not just retrieval alone: text/
@@ -33,9 +33,13 @@ import re
 from collections.abc import Collection
 from typing import Any
 
-from cwym_agent.geodata.address_resolver import AddressResolver
+import httpx
+
+from cwym_agent.city_profile import CityProfile
+from cwym_agent.geodata.adapters import build_boundary_source, build_geocoder, build_layer_catalog_source
 from cwym_agent.geodata.filter_agent import FilterAgent
 from cwym_agent.geodata.layer_search import LayerSearchService
+from cwym_agent.geodata.locations import LocationResolver
 from cwym_agent.geodata.settings import GeodataSettings
 from cwym_agent.geodata.types import (
     HAMBURG_EXTENT,
@@ -124,20 +128,31 @@ def _parse_selection_index(reply: str, num_candidates: int) -> int | None:
 
 
 class RealDataServices:
-    """Real location/layer/action resolution, backed by Hamburg's public APIs."""
+    """Real location/layer/action resolution for the profile's city."""
 
     def __init__(
         self,
+        profile: CityProfile,
         settings: GeodataSettings | None = None,
-        address_resolver: AddressResolver | None = None,
+        locations: LocationResolver | None = None,
         layer_search: LayerSearchService | None = None,
         filter_agent: FilterAgent | None = None,
         llm: Any | None = None,
         udp_analysis: UdpAnalysisClient | None = None,
     ):
+        """The data sources are built from ``profile`` unless passed in
+        (tests pass doubles)."""
+
+        self.profile = profile
         self.settings = settings or GeodataSettings()
-        self.address_resolver = address_resolver or AddressResolver(self.settings)
-        self.layer_search = layer_search or LayerSearchService(self.settings)
+        http_client = httpx.Client(timeout=self.settings.timeout) if locations is None or layer_search is None else None
+        self.locations = locations or LocationResolver(
+            build_geocoder(profile.geocoder, self.settings, http_client),
+            build_boundary_source(profile.boundaries, self.settings, http_client),
+        )
+        self.layer_search = layer_search or LayerSearchService(
+            build_layer_catalog_source(profile.layer_catalog, self.settings, http_client), self.settings
+        )
         self.llm = llm if llm is not None else Qwen3Client()
         self.filter_agent = filter_agent or FilterAgent(self.settings, llm=self.llm)
         self.udp_analysis = udp_analysis or UdpAnalysisClient(self.settings)
@@ -161,7 +176,7 @@ class RealDataServices:
         if query.strip().lower() == "hamburg":
             return [_DEFAULT_LOCATION]
 
-        match = self.address_resolver.resolve(query)
+        match = self.locations.resolve(query)
         return [match] if match else [_DEFAULT_LOCATION]
 
     def resolve_layer(

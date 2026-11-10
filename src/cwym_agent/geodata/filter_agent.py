@@ -19,7 +19,7 @@ class of injection-via-filter-value bugs a raw-text approach would
 otherwise need to defend against. When the query also resolved a
 location with an area boundary, a ``S_INTERSECTS(geometry, boundary)``
 spatial predicate is ANDed in deterministically (no LLM involvement -
-the geometry comes straight from ``AddressResolver``) - this is what
+the geometry comes straight from ``LocationResolver``) - this is what
 lets ``FilterAgent`` supersede the old client-side ``APPLY_SPATIAL_FILTER``
 masking mechanism for "<layer> in <district>"-shaped queries, not just
 replace its name. Verified live against Hamburg's real API:

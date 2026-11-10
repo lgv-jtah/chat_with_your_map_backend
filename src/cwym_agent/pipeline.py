@@ -50,8 +50,8 @@ def build_pipeline(
     ``profile`` is the deployment's city profile (Section 14.3); by
     default it's loaded from ``CWYM_CITY_PROFILE``. It is loaded first, so
     a missing or invalid profile fails before the slow warm-up. The
-    components don't read from it yet (CHAT-5); its id is kept in
-    ``pipeline.metadata["city_profile"]``.
+    default ``RealDataServices`` builds the city's data sources from it;
+    its id is kept in ``pipeline.metadata["city_profile"]``.
 
     If ``data_services`` exposes a ``warm_up()`` method (the real
     ``RealDataServices`` does - it fetches and embeds Hamburg's ~6,500
@@ -62,7 +62,7 @@ def build_pipeline(
     profile = profile if profile is not None else load_profile()
     logger.info("City profile: %s (%s), languages %s", profile.id, profile.name, ", ".join(profile.languages))
     llm = llm if llm is not None else Qwen3Client()
-    data_services = data_services if data_services is not None else RealDataServices(llm=llm)
+    data_services = data_services if data_services is not None else RealDataServices(profile, llm=llm)
 
     warm_up = getattr(data_services, "warm_up", None)
     if callable(warm_up):

@@ -60,6 +60,22 @@ class LocationMatch:
     asks the user which one they mean."""
 
 
+def bbox_of(geometry: dict) -> tuple[float, float, float, float]:
+    """WGS84 (minLon, minLat, maxLon, maxLat) covering a GeoJSON
+    Polygon/MultiPolygon - for ZOOM_TO_EXTENT, alongside the geometry
+    itself (which DRAW_BOUNDARY outlines directly)."""
+
+    def points(coords):
+        if isinstance(coords[0], (int, float)):
+            yield coords
+            return
+        for item in coords:
+            yield from points(item)
+
+    lons, lats = zip(*points(geometry["coordinates"]))
+    return min(lons), min(lats), max(lons), max(lats)
+
+
 @dataclass
 class LayerMatch:
     name: str

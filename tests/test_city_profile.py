@@ -159,17 +159,14 @@ def test_profile_is_immutable():
 # --- Hamburg profile == values still hard-coded (until CHAT-5) --------------
 
 
-def test_hamburg_profile_matches_hardcoded_values(monkeypatch):
-    """CHAT-3 only introduces the profile; the code still uses its own
-    constants. Fail if the two drift apart before CHAT-5 wires them up."""
+def test_hamburg_profile_matches_hardcoded_values():
+    """The data sources are built from the profile now; the default
+    location and extent are still hard-coded until the next CHAT-5 step.
+    Fail if the two drift apart until then."""
 
-    from cwym_agent.geodata import address_resolver, area_boundaries, real_data_services
-    from cwym_agent.geodata.settings import GeodataSettings
+    from cwym_agent.geodata import real_data_services
     from cwym_agent.geodata.types import HAMBURG_EXTENT
 
-    for var in ("CWYM_LAYER_SEARCH_URL", "CWYM_ADDRESS_SEARCH_URL", "CWYM_AREA_BOUNDARIES_URL"):
-        monkeypatch.delenv(var, raising=False)
-    settings = GeodataSettings()
     p = load_profile("hamburg")
 
     assert p.extent == HAMBURG_EXTENT
@@ -177,12 +174,6 @@ def test_hamburg_profile_matches_hardcoded_values(monkeypatch):
     assert (p.default_location.name, p.default_location.lat, p.default_location.lon) == (
         default.name, default.latitude, default.longitude,
     )
-    assert p.geocoder.url == settings.address_search_url
-    assert set(p.geocoder.broad_types) == set(address_resolver._BROAD_TYPES)
-    assert p.geocoder.place_types == address_resolver._KIND_BY_TYPE
-    assert p.layer_catalog.url == settings.layer_search_url
-    assert p.boundaries.url == settings.area_boundaries_url
-    assert {k: (c.collection, c.name_field) for k, c in p.boundaries.collections.items()} == area_boundaries._COLLECTIONS
 
 
 # --- pipeline wiring -------------------------------------------------------
