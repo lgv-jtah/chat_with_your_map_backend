@@ -27,19 +27,13 @@ class LocationMatch:
     profile's extent for the city itself, which has no boundary geometry
     to derive one from."""
     kind: str | None = None
-    """"bezirk" | "stadtteil" | "address", or None when the resolved hit
-    is street-level or otherwise doesn't fit one of those (matches the
-    MapCommand schema's Area/NamedLocation `kind` enum). Lets a location
-    travel by name+kind for later re-resolution (conversation context,
+    """One of the city profile's location kinds (the values of
+    ``geocoder.place_types``, e.g. "stadtteil"), or None when the resolved
+    hit is street-level or otherwise none of them. Lets a location travel
+    by name+kind for later re-resolution (conversation context,
     cwym-agent-architecture.md Section 10) without trusting client-
-    supplied geometry. Derived from Hamburg's own address index `type`
-    field - verified live (ImplementationLog.md): `"county"` is Bezirk
-    (e.g. "Altona", "Hamburg-Harburg"), `"district"` is Stadtteil (e.g.
-    "Altona-Altstadt", "Ottensen", "Eppendorf" - including a Stadtteil
-    that shares its Bezirk's exact name, like "Eimsbüttel"), `"address"`
-    is address. `"state"`/`"city"` (also in `_BROAD_TYPES`) have no
-    observed hits in Hamburg's index and no clean equivalent here, so
-    they map to None rather than a guessed value."""
+    supplied geometry. The geocoder adapter maps its service's own place
+    types to these kinds."""
     alternatives: list[str] = field(default_factory=list)
     """Other areas the query could equally mean, e.g. "Hoheluft" ->
     this match is "Hoheluft-Ost", alternatives ["Hoheluft-West"]. Non-empty
@@ -70,17 +64,17 @@ class LayerMatch:
     confidence: float
     description: str = ""
     typ: str | None = None
-    """The service type Hamburg's catalog reports (e.g. "OAF", "WMS",
+    """The service type the layer catalog reports (e.g. "OAF", "WMS",
     "WFS", "SensorThings") - FilterAgent only operates on "OAF" layers
     (see cwym-agent-architecture.md Section 9)."""
     url: str | None = None
-    """The service's API root, e.g. "https://api.hamburg.de/datasets/v1/
+    """The service's API root, e.g. "https://example.org/datasets/v1/
     stadtrad" for an OAF layer - FilterAgent builds
     f"{url}/collections/{collection}/items" from this."""
     collection: str | None = None
     """The OGC API Features collection id (only set for typ == "OAF"),
-    e.g. "stadtrad_stationen" - distinct from layer_id, which is
-    Hamburg's own catalog id."""
+    e.g. "stadtrad_stationen" - distinct from layer_id, which is the
+    layer catalog's own id."""
     feature_type: str | None = None
     """The WFS feature type name without prefix (only for typ == "WFS"),
     e.g. "staatliche_schulen" - services.json's ``featureType``.

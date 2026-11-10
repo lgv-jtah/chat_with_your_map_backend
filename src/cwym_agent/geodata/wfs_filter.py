@@ -2,12 +2,12 @@
 spatial intersect" filter it runs against OGC API Features (CQL2), here
 as an OGC Filter Encoding (FES 2.0) ``GetFeature`` request.
 
-Most layers in a Masterportal are WFS, not OAF - e.g. Hamburg's school
+Most layers in a Masterportal are WFS, not OAF - e.g. the school
 layers (``HH_WFS_Schulen``). Without this, a query like "Grundschulen in
 Hoheluft" fell back to showing the unfiltered layer.
 
-Verified live against ``https://geodienste.hamburg.de/HH_WFS_Schulen``
-(deegree):
+Verified live against the school layers' WFS (``HH_WFS_Schulen``,
+deegree):
 
 - The feature type's namespace must be taken from the WFS's own schema
   (``DescribeFeatureType`` ``targetNamespace``): services.json's

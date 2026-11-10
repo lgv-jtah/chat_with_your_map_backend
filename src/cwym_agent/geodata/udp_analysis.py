@@ -2,7 +2,7 @@
 
 The UDP agent is a separate, independently deployed Haystack pipeline
 (``udp-chatbot`` repo, self-hosted Hayhooks) that answers analytical
-questions about Hamburg's Urban Data Platform: counts, areas, nearest
+questions about the Urban Data Platform's data: counts, areas, nearest
 features, comparisons. CWYM calls it as its slowest sub-agent, only for
 questions its own show/filter/navigate tools can't answer.
 

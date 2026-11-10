@@ -22,9 +22,9 @@ spatial predicate is ANDed in deterministically (no LLM involvement -
 the geometry comes straight from ``LocationResolver``) - this is what
 lets ``FilterAgent`` supersede the old client-side ``APPLY_SPATIAL_FILTER``
 masking mechanism for "<layer> in <district>"-shaped queries, not just
-replace its name. Verified live against Hamburg's real API:
-``S_INTERSECTS`` narrowed Hamburg's 37 hospitals down to the 1 actually
-within Wandsbek's boundary.
+replace its name. Verified live against a real API: ``S_INTERSECTS``
+narrowed a city's 37 hospitals down to the 1 actually within the
+borough's boundary.
 
 Attribute schema discovery uses OAF's own ``/collections/{id}/queryables``
 endpoint (OGC API Features Part 3) rather than guessing field names -

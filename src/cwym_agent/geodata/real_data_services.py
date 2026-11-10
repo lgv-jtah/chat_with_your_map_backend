@@ -8,11 +8,11 @@ calls.
 
 Layer resolution needs two LLM-assisted steps on top of
 ``LayerSearchService``'s retrieval, not just retrieval alone: text/
-embedding similarity cannot bridge colloquial German terms to Hamburg's
+embedding similarity cannot bridge colloquial German terms to a city's
 official layer names when they share no lexical overlap - e.g.
 "Fahrradstationen" scores far closer to "Fahrradluftstationen" (bike
-air-pump stations) than to the actually-correct "StadtRAD-Stationen
-Hamburg" (Hamburg's bike-sharing brand name) under both embedding
+air-pump stations) than to the actually-correct "StadtRAD-Stationen"
+(a bike-sharing brand name) under both embedding
 cosine similarity and cross-encoder reranking, and "StadtRAD" doesn't
 even make the top ~40 retrieved candidates for that query - verified
 empirically against the real layer catalog. Qwen3 already has the
@@ -144,8 +144,8 @@ class RealDataServices:
         self.udp_analysis = udp_analysis or UdpAnalysisClient(profile.extent, self.settings)
 
         # The city itself. A city's address search typically indexes only
-        # places *within* the city (Hamburg's returns its boroughs for
-        # "Hamburg", e.g. "Hamburg-Harburg", never a city-wide hit), so the
+        # places *within* the city (found live: searching the city's name
+        # returns one of its boroughs, never a city-wide hit), so the
         # city's own names are answered here, and the city is also the
         # fallback when nothing more specific resolves.
         home = profile.default_location

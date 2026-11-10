@@ -22,7 +22,7 @@ deliberate, not an oversight.
 resolved location has a sensible area to fit the view to
 (``LocationMatch.extent`` - derived from a real address-search
 boundary, or the profile's extent for the city itself, which has none)
-- found live: without it, navigating to "Hamburg" left the map zoomed in
+- found live: without it, navigating to the city itself left the map zoomed in
 on the city center at a zoom level tuned for a single address, not a
 whole city.
 

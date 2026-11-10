@@ -1,6 +1,6 @@
 """Asking back for an ambiguous place, and understanding the answer.
 
-"Grundschulen in Hoheluft" - Hamburg has Hoheluft-Ost and Hoheluft-West,
+"Grundschulen in Hoheluft" - there are Hoheluft-Ost and Hoheluft-West,
 so the assistant asks which one is meant (``question``). The user then
 usually answers with just the place ("Hoheluft-West", "West"). Found live:
 handing such a two-word reply to the planner was unreliable - it rebuilt

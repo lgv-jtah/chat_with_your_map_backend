@@ -246,8 +246,8 @@ class AgentExecutorComponent:
             return self.data_services.resolve_locations(query)
         if agent_name == "layer_resolver":
             # A layer the portal itself names exactly like the query wins
-            # before the central search - which only knows Hamburg's
-            # catalog ids and can't find a portal-only variant such as
+            # before the central search - which only knows the city
+            # catalog's ids and can't find a portal-only variant such as
             # "Grundschulen" (8712.1 = the schools WFS 8712 with a filter).
             portal_match = layer_catalog.match_name(query) if layer_catalog is not None else None
             if portal_match is not None:

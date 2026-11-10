@@ -54,8 +54,8 @@ def build_pipeline(
     its id is kept in ``pipeline.metadata["city_profile"]``.
 
     If ``data_services`` exposes a ``warm_up()`` method (the real
-    ``RealDataServices`` does - it fetches and embeds Hamburg's ~6,500
-    map layers), it is called here so the cost is paid once, when the
+    ``RealDataServices`` does - it fetches and embeds the city's
+    thousands of map layers), it is called here so the cost is paid once, when the
     pipeline is built, not on a user's first query.
     """
 
@@ -97,7 +97,7 @@ def run_pipeline(
 
     :param allowed_layer_ids: the requesting portal's own layer ids
         (``PortalCatalogResolver``, Section 8), or ``None`` to search
-        Hamburg's full layer catalog unscoped.
+        the city's full layer catalog unscoped.
     :param context: this request's validated conversation context
         (Section 10) - map state + recent history. ``None`` on a
         request with no usable ``portal_context``/state to validate
