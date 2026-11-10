@@ -102,6 +102,8 @@ Qwen3Settings` and `cwym_agent.geodata.settings.GeodataSettings`):
 
 | Variable | Default | Purpose |
 |---|---|---|
+| `CWYM_CITY_PROFILE` | `hamburg` | City profile of this deployment: a name under the profiles directory (`profiles/<name>/profile.yaml`) or a path to a profile YAML file. Validated at startup; a missing or invalid profile stops the server with a message naming the file and field. See "City profiles" below |
+| `CWYM_PROFILES_DIR` | `profiles/` in the repo (Docker: `/app/profiles`) | Directory holding the city profiles |
 | `CWYM_QWEN3_BASE_URL` | `http://10.200.160.182:5555/v1` | vLLM server's OpenAI-compatible base URL |
 | `CWYM_QWEN3_MODEL` | `Qwen/Qwen3.8-27B` | Model name to request |
 | `CWYM_QWEN3_API_KEY` | `EMPTY` | API key (the server tested against requires no real auth) |
@@ -136,6 +138,24 @@ Qwen3Settings` and `cwym_agent.geodata.settings.GeodataSettings`):
 | `CWYM_TRACE_FILE` | *(empty; Docker: `/var/log/cwym/traces.jsonl`)* | Also write the run traces to this rotating JSONL file |
 | `CWYM_TRACE_FILE_MAX_MB` | `50` | Size at which the trace file rotates |
 | `CWYM_TRACE_FILE_BACKUPS` | `10` | Rotated trace files kept (`traces.jsonl.1` ... `.10`) |
+
+## City profiles
+
+CWYM is one codebase with one deployment per city (ADR-002,
+`architecture/cmym-agent-architecture.md` Section 14). Everything
+city-specific - name, languages, default location and extent, geocoder,
+layer catalog, boundary dataset, tier 2 analysis agent - lives in
+`profiles/<city>/profile.yaml`; the schema and its checks are in
+`cwym_agent.city_profile`. `profiles/hamburg/profile.yaml` is the default.
+
+The profile is loaded and validated at startup and passed into
+`build_pipeline`. For now (CHAT-3) the components still use their own
+Hamburg values; `tests/test_city_profile.py` checks that those match the
+Hamburg profile. CHAT-5 makes the components read from the profile.
+Endpoint environment variables (`CWYM_*_URL`) keep overriding.
+
+In Docker the profiles are copied to `/app/profiles`; mount a directory
+there to use other profiles.
 
 ## Setup
 

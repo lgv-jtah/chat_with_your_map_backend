@@ -16,11 +16,13 @@ what sub-agents resolved (see ``TextResponseComponent``'s own
 docstring for the live bug this fixes).
 """
 
+import logging
 from typing import Any
 
 from haystack import Pipeline
 
 from cwym_agent.bridge import AGUIEventBridge
+from cwym_agent.city_profile import CityProfile, load_profile
 from cwym_agent.components.agent_executor import AgentExecutorComponent
 from cwym_agent.components.command_builder import CommandBuilderComponent
 from cwym_agent.components.master_agent import MasterAgentComponent
@@ -31,13 +33,25 @@ from cwym_agent.geodata.portal_catalog_resolver import LayerCatalog
 from cwym_agent.llm.qwen3_client import Qwen3Client
 from cwym_agent.geodata.real_data_services import RealDataServices
 
+logger = logging.getLogger(__name__)
 
-def build_pipeline(llm: Any | None = None, data_services: Any | None = None) -> Pipeline:
+
+def build_pipeline(
+    llm: Any | None = None,
+    data_services: Any | None = None,
+    profile: CityProfile | None = None,
+) -> Pipeline:
     """Build the pipeline, wired to the real Qwen3 + geodata backends by default.
 
     ``llm``/``data_services`` can be overridden (e.g. with
     ``StubQwen3Generator``/``StubDataServices``) for fast, deterministic
     tests that don't depend on network access or the real vLLM server.
+
+    ``profile`` is the deployment's city profile (Section 14.3); by
+    default it's loaded from ``CWYM_CITY_PROFILE``. It is loaded first, so
+    a missing or invalid profile fails before the slow warm-up. The
+    components don't read from it yet (CHAT-5); its id is kept in
+    ``pipeline.metadata["city_profile"]``.
 
     If ``data_services`` exposes a ``warm_up()`` method (the real
     ``RealDataServices`` does - it fetches and embeds Hamburg's ~6,500
@@ -45,6 +59,8 @@ def build_pipeline(llm: Any | None = None, data_services: Any | None = None) -> 
     pipeline is built, not on a user's first query.
     """
 
+    profile = profile if profile is not None else load_profile()
+    logger.info("City profile: %s (%s), languages %s", profile.id, profile.name, ", ".join(profile.languages))
     llm = llm if llm is not None else Qwen3Client()
     data_services = data_services if data_services is not None else RealDataServices(llm=llm)
 
@@ -52,7 +68,7 @@ def build_pipeline(llm: Any | None = None, data_services: Any | None = None) -> 
     if callable(warm_up):
         warm_up()
 
-    pipeline = Pipeline()
+    pipeline = Pipeline(metadata={"city_profile": profile.id})
 
     pipeline.add_component("master_agent", MasterAgentComponent(llm=llm))
     pipeline.add_component("agent_executor", AgentExecutorComponent(data_services=data_services))

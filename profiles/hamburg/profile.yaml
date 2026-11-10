@@ -1,0 +1,52 @@
+# City profile: Hamburg
+#
+# Selected with CWYM_CITY_PROFILE=hamburg (the default). Schema and rules:
+# src/cwym_agent/city_profile.py, architecture: cmym-agent-architecture.md
+# Section 14.3.
+#
+# CHAT-3: these values mirror what is still hard-coded in the code (checked by
+# tests/test_city_profile.py). CHAT-5 makes the components read them from
+# here. Environment variables (CWYM_*_URL etc.) keep overriding endpoints.
+
+id: hamburg
+name: Hamburg
+official_name: Freie und Hansestadt Hamburg
+languages: [de]
+
+# The city itself - Hamburg's address search has no city-wide hit.
+default_location:
+  name: Hamburg
+  lat: 53.5511
+  lon: 9.9937
+
+# WGS84 [minLon, minLat, maxLon, maxLat]: the portal's own map extent
+# (chat_with_your_map_portal config.json, EPSG:25832
+# [510000, 5850000, 625000.4, 6000000]) converted with pyproj.
+extent: [9.148322816744086, 52.79970456940332, 10.913170524761878, 54.13290152266379]
+
+geocoder:
+  adapter: hamburg_addr_search
+  url: https://api.hamburg.de/addr_search
+  # Area-level hits, preferred over street hits for a bare place name.
+  broad_types: [state, city, county, district]
+  # Address search type -> CWYM location kind ("state"/"city" stay unmapped).
+  place_types:
+    county: bezirk
+    district: stadtteil
+    address: address
+
+layer_catalog:
+  adapter: hamburg_layers_es
+  url: https://geodienste.hamburg.de/layers/_search
+
+boundaries:
+  adapter: ogc_api_features
+  url: https://api.hamburg.de/datasets/v1/verwaltungsgrenzen
+  strip_name_prefixes: ["Hamburg-"]
+  collections:
+    bezirk: {collection: bezirke, name_field: bezirk_name}
+    stadtteil: {collection: stadtteile, name_field: stadtteil_name}
+
+# Tier 2: Hamburg's Urban Data Platform agent (endpoint: CWYM_UDP_AGENT_URL).
+analysis_agent:
+  adapter: udp
