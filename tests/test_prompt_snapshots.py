@@ -163,7 +163,7 @@ class TestResponsePrompts:
     _LOCATION = LocationMatch("Wandsbek", 53.5794, 10.0911, 0.9, kind="bezirk")
     _LAYER = LayerMatch("StadtRAD-Stationen", "27764", 0.9)
 
-    def _render(self, aggregated: dict, commands: list, language: str | None = None) -> str:
+    def _render(self, aggregated: dict, commands: list, language: str | None = None, supported=None) -> str:
         llm = _RecordingLlm(generate_reply="Antwort")
         TextResponseComponent(_PROFILE, llm=llm).run(
             aggregated,
@@ -172,6 +172,7 @@ class TestResponsePrompts:
             context=_FOLLOW_UP_CONTEXT,
             layer_catalog=_CATALOG,
             language=language,
+            supported_commands=supported,
         )
         self.system_prompt = llm.system_prompts[0][1]
         return llm.generate_prompts[0][1]
@@ -404,3 +405,22 @@ class TestAnalysisExtractionPrompt:
         )
 
         assert_snapshot("analysis_extraction", dict(llm.generate_prompts)["analysis_extraction"])
+
+
+
+class TestSuggestionsPrompt:
+    """CHAT-14: clients with SHOW_SUGGESTIONS get the suggestions
+    instruction - before the language directive, which stays last."""
+
+    def test_reply_prompts(self):
+        responses = TestResponsePrompts()
+        aggregated = {"locations": [TestResponsePrompts._LOCATION], "layer": TestResponsePrompts._LAYER}
+        commands = [{"type": "ACTIVATE_LAYER", "payload": {"layerIds": ["27764"]}}]
+        supported = frozenset({"SHOW_SUGGESTIONS"})
+
+        german = responses._render(aggregated, commands, "de", supported)
+        english = responses._render(aggregated, commands, "en", supported)
+
+        assert_snapshot("response_suggestions", german)
+        assert_snapshot("response_suggestions_en", english)
+        assert english.rstrip().endswith("keep that marker as it is.")
