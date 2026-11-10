@@ -42,7 +42,6 @@ from cwym_agent.geodata.layer_search import LayerSearchService
 from cwym_agent.geodata.locations import LocationResolver
 from cwym_agent.geodata.settings import GeodataSettings
 from cwym_agent.geodata.types import (
-    HAMBURG_EXTENT,
     ActionMatch,
     AnalysisResult,
     FilterResult,
@@ -53,19 +52,6 @@ from cwym_agent.geodata.udp_analysis import UdpAnalysisClient
 from cwym_agent.llm.qwen3_client import Qwen3Client
 
 logger = logging.getLogger(__name__)
-
-# Hamburg's own address index (api.hamburg.de/addr_search) is scoped to
-# streets/districts/boroughs *within* Hamburg - it has no single record
-# for "Hamburg" the city itself (confirmed live: searching "Hamburg" or
-# "Freie und Hansestadt Hamburg" returns only its individual boroughs,
-# e.g. "Hamburg-Mitte", "Hamburg-Nord", never a city-wide hit). Whenever
-# no more specific location is resolved (unmatched query, or the query
-# genuinely is just "Hamburg"), fall back to the city's well-known
-# center, matching what StubDataServices did for its equivalent default
-# case.
-#
-
-_DEFAULT_LOCATION = LocationMatch("Hamburg", 53.5511, 9.9937, 0.9, extent=HAMBURG_EXTENT)
 
 _ACTION_KEYWORDS: list[tuple[tuple[str, ...], str]] = [
     (("navigiere", "navigate", "fahre nach"), "Navigieren"),
@@ -155,7 +141,16 @@ class RealDataServices:
         )
         self.llm = llm if llm is not None else Qwen3Client()
         self.filter_agent = filter_agent or FilterAgent(self.settings, llm=self.llm)
-        self.udp_analysis = udp_analysis or UdpAnalysisClient(self.settings)
+        self.udp_analysis = udp_analysis or UdpAnalysisClient(profile.extent, self.settings)
+
+        # The city itself. A city's address search typically indexes only
+        # places *within* the city (Hamburg's returns its boroughs for
+        # "Hamburg", e.g. "Hamburg-Harburg", never a city-wide hit), so the
+        # city's own names are answered here, and the city is also the
+        # fallback when nothing more specific resolves.
+        home = profile.default_location
+        self.city_location = LocationMatch(home.name, home.lat, home.lon, 0.9, extent=profile.extent)
+        self._city_names = {n.strip().lower() for n in (profile.name, profile.official_name, home.name)}
 
     def warm_up(self) -> None:
         """Eagerly build the layer search index.
@@ -168,16 +163,11 @@ class RealDataServices:
         self.layer_search.warm_up()
 
     def resolve_locations(self, query: str) -> list[LocationMatch]:
-        # Hamburg's address index has no record for "Hamburg" the city
-        # itself (it only indexes streets/districts/boroughs *within*
-        # Hamburg), so a bare "Hamburg" query would otherwise resolve to
-        # some arbitrary borough (e.g. "Hamburg-Harburg") - handle it
-        # directly instead.
-        if query.strip().lower() == "hamburg":
-            return [_DEFAULT_LOCATION]
+        if query.strip().lower() in self._city_names:
+            return [self.city_location]
 
         match = self.locations.resolve(query)
-        return [match] if match else [_DEFAULT_LOCATION]
+        return [match] if match else [self.city_location]
 
     def resolve_layer(
         self, query: str, allowed_layer_ids: Collection[str] | None = None

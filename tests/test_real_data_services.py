@@ -15,7 +15,6 @@ import httpx2
 
 from cwym_agent.city_profile import load_profile
 from cwym_agent.geodata.real_data_services import RealDataServices
-from cwym_agent.geodata.types import HAMBURG_EXTENT
 from cwym_agent.geodata.types import ActionMatch, LayerMatch, LocationMatch
 from cwym_agent.llm.qwen3_client import Qwen3Client
 from cwym_agent.settings import Qwen3Settings
@@ -181,29 +180,45 @@ class TestResolveLayer:
 
 
 class TestResolveLocations:
-    def test_bare_hamburg_query_uses_default_without_calling_resolver(self):
+    _CITY = LocationMatch("Hamburg", 53.5511, 9.9937, 0.9, extent=_PROFILE.extent)
+
+    def test_city_names_use_the_city_location_without_calling_the_resolver(self):
         locations = FakeLocations(LocationMatch("Hamburg-Harburg", 1.0, 2.0, 0.9))
         service = _service(locations=locations)
 
-        result = service.resolve_locations("Hamburg")
-
-        assert result == [LocationMatch("Hamburg", 53.5511, 9.9937, 0.9, extent=HAMBURG_EXTENT)]
+        assert service.resolve_locations("Hamburg") == [self._CITY]
+        assert service.resolve_locations(" freie und hansestadt hamburg ") == [self._CITY]
         assert locations.queries == []
 
     def test_resolved_match_is_returned(self):
         match = LocationMatch("Wandsbek", 53.6, 10.1, 0.8)
-        locations = FakeLocations(match)
-        service = _service(locations=locations)
+        service = _service(locations=FakeLocations(match))
 
         assert service.resolve_locations("Wandsbek") == [match]
 
-    def test_unresolved_query_falls_back_to_default_hamburg_location(self):
+    def test_unresolved_query_falls_back_to_the_city_location(self):
+        service = _service(locations=FakeLocations(None))
+
+        assert service.resolve_locations("kompletter nonsens") == [self._CITY]
+
+    def test_city_location_comes_from_the_profile(self):
+        profile = _PROFILE.model_copy(
+            update={
+                "name": "Teststadt",
+                "official_name": "Freie Teststadt",
+                "default_location": _PROFILE.default_location.model_copy(
+                    update={"name": "Teststadt Mitte", "lat": 53.0, "lon": 10.0}
+                ),
+            }
+        )
         locations = FakeLocations(None)
-        service = _service(locations=locations)
+        service = RealDataServices(profile, locations=locations, layer_search=FakeLayerSearch({}))
 
-        result = service.resolve_locations("kompletter nonsens")
-
-        assert result == [LocationMatch("Hamburg", 53.5511, 9.9937, 0.9, extent=HAMBURG_EXTENT)]
+        assert service.resolve_locations("Teststadt") == [
+            LocationMatch("Teststadt Mitte", 53.0, 10.0, 0.9, extent=_PROFILE.extent)
+        ]
+        assert service.resolve_locations("Hamburg") == service.resolve_locations("x")
+        assert locations.queries == ["Hamburg", "x"]
 
 
 class TestDetectAction:

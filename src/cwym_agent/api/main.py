@@ -28,7 +28,7 @@ from haystack import Pipeline
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator, model_validator
 
 from cwym_agent.bridge import AGUIEventBridge
-from cwym_agent.city_profile import CityProfileError, load_profile
+from cwym_agent.city_profile import CityProfile, CityProfileError, load_profile
 from cwym_agent.geodata import clarification
 from cwym_agent.geodata.conversation_context import build_context, current_query
 from cwym_agent.geodata.portal_catalog_resolver import PortalCatalogResolver, build_inline_catalog
@@ -56,7 +56,14 @@ def get_pipeline() -> Pipeline:
     Qwen3/vLLM server or the real geodata services.
     """
 
-    return build_pipeline()
+    return build_pipeline(profile=get_city_profile())
+
+
+@lru_cache(maxsize=1)
+def get_city_profile() -> CityProfile:
+    """The deployment's city profile (``CWYM_CITY_PROFILE``), loaded once."""
+
+    return load_profile()
 
 
 @lru_cache(maxsize=1)
@@ -72,7 +79,7 @@ def get_portal_catalog_resolver() -> PortalCatalogResolver:
 async def lifespan(app: FastAPI):
     # Eagerly build (and warm up) the pipeline at startup rather than
     # lazily on the first request: RealDataServices.warm_up() fetches
-    # and embeds Hamburg's ~6,500 map layers, which takes a few minutes
+    # and embeds the city's map layers (thousands), which takes a few minutes
     # - better to pay that cost (and fail fast if the layer catalog or
     # embedding model is unreachable) before accepting traffic than to
     # block a user's first query.
@@ -82,16 +89,17 @@ async def lifespan(app: FastAPI):
     # instead of after - or in the middle of - the multi-minute warm-up.
     # Starlette still logs its own traceback after this message.
     try:
-        load_profile()
+        profile = get_city_profile()
     except CityProfileError as e:
         logger.error("Startup aborted - %s", e)
         raise SystemExit(1) from None
 
     logger.info(
-        "Warming up pipeline (fetching + embedding Hamburg's ~6,500 map "
-        "layers) - this takes a few minutes, especially on the first run "
-        "which also downloads the embedding/reranker models. Not stuck, "
-        "just slow; see progress below."
+        "Warming up pipeline (fetching + embedding the map layers of %s) - "
+        "this takes a few minutes, especially on the first run which also "
+        "downloads the embedding/reranker models. Not stuck, just slow; see "
+        "progress below.",
+        profile.name,
     )
     start = time.monotonic()
     get_pipeline()

@@ -93,10 +93,9 @@ class TestBuildCommands:
         assert [cmd["type"] for cmd in commands] == ["DRAW_BOUNDARY", "NAVIGATE_TO_LOCATION", "ZOOM_TO_EXTENT"]
 
     def test_location_with_extent_but_no_boundary_still_zooms_to_extent(self):
-        """The Hamburg-wide fallback (RealDataServices' _DEFAULT_LOCATION)
-        has no real boundary geometry to draw, but does have a hardcoded
-        extent - DRAW_BOUNDARY must not fire, ZOOM_TO_EXTENT still
-        should."""
+        """The city location (RealDataServices.city_location) has no real
+        boundary geometry to draw, but does have the profile's extent -
+        DRAW_BOUNDARY must not fire, ZOOM_TO_EXTENT still should."""
 
         aggregated = _aggregated("Zeigen", layer=None, locations=[_HAMBURG_WIDE_LOCATION])
 

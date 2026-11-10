@@ -8,19 +8,6 @@ needing to know which implementation is in use.
 
 from dataclasses import dataclass, field
 
-# HAMBURG_EXTENT is chat_with_your_map_portal/config.json's own
-# portalConfig.map.mapView.extent - [510000.0, 5850000.0, 625000.4,
-# 6000000.0] in EPSG:25832 - converted to WGS84 via pyproj
-# (Transformer.from_crs("EPSG:25832", "EPSG:4326", always_xy=True)),
-# not a from-scratch guess: reuses the portal author's own already-
-# vetted "sensible whole-region view", not a data-derived union of
-# Hamburg's boroughs (which would technically be more "correct" but
-# includes far-flung exclaves like Neuwerk, an island in the North Sea
-# that's administratively part of Hamburg-Mitte - zooming out that far
-# would make the actual urban area look tiny, the opposite of what a
-# "show me Hamburg" default should look like).
-HAMBURG_EXTENT = (9.148322816744086, 52.79970456940332, 10.913170524761878, 54.13290152266379)
-
 
 @dataclass
 class LocationMatch:
@@ -36,9 +23,9 @@ class LocationMatch:
     """WGS84 bounding box (minLon, minLat, maxLon, maxLat) to fit the map
     view to (ZOOM_TO_EXTENT), distinct from `boundary` (which drives
     DRAW_BOUNDARY's outline) - set whenever there's a sensible area to
-    zoom to: derived from `boundary` when one exists, or a hardcoded
-    region extent for a location (like the Hamburg-wide fallback) that
-    has no real boundary geometry to derive one from."""
+    zoom to: derived from `boundary` when one exists, or the city
+    profile's extent for the city itself, which has no boundary geometry
+    to derive one from."""
     kind: str | None = None
     """"bezirk" | "stadtteil" | "address", or None when the resolved hit
     is street-level or otherwise doesn't fit one of those (matches the

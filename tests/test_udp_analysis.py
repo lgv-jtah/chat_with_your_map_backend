@@ -7,7 +7,15 @@ import httpx
 import pytest
 
 from cwym_agent.geodata.settings import GeodataSettings
-from cwym_agent.geodata.udp_analysis import UdpAnalysisClient, format_history_and_query, parse_response
+from cwym_agent.city_profile import load_profile
+from cwym_agent.geodata import udp_analysis
+from cwym_agent.geodata.udp_analysis import UdpAnalysisClient, format_history_and_query
+
+_EXTENT = load_profile("hamburg").extent
+
+
+def parse_response(data):
+    return udp_analysis.parse_response(data, _EXTENT)
 
 _FC = {
     "type": "FeatureCollection",
@@ -77,8 +85,8 @@ class TestParseResponse:
         assert layer.bbox == (9.93, 53.55, 9.93, 53.55)
 
     def test_out_of_extent_geometry_ignored_for_bbox(self):
-        """Hamburg's StadtRAD data has a station at [0, 0]; its 200m
-        buffer must not stretch the zoom extent to Null Island."""
+        """The StadtRAD data has a station at [0, 0]; its 200m buffer must
+        not stretch the zoom extent beyond the city's extent."""
 
         def ring(cx, cy, d=0.002):
             return [[[cx - d, cy - d], [cx + d, cy - d], [cx + d, cy + d], [cx - d, cy - d]]]
@@ -135,6 +143,7 @@ class TestFormatHistoryAndQuery:
 class TestUdpAnalysisClient:
     def _client(self, handler, **settings):
         return UdpAnalysisClient(
+            _EXTENT,
             GeodataSettings(udp_agent_url="http://udp:1416/", **settings),
             http_client=httpx.Client(transport=httpx.MockTransport(handler)),
         )

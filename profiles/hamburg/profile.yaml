@@ -21,7 +21,10 @@ default_location:
 
 # WGS84 [minLon, minLat, maxLon, maxLat]: the portal's own map extent
 # (chat_with_your_map_portal config.json, EPSG:25832
-# [510000, 5850000, 625000.4, 6000000]) converted with pyproj.
+# [510000, 5850000, 625000.4, 6000000]) converted with pyproj. Deliberately
+# the portal author's "whole region" view, not the union of the boroughs:
+# that would include exclaves like Neuwerk (an island in the North Sea,
+# part of Hamburg-Mitte) and make the urban area look tiny.
 extent: [9.148322816744086, 52.79970456940332, 10.913170524761878, 54.13290152266379]
 
 geocoder:

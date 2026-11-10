@@ -156,26 +156,6 @@ def test_profile_is_immutable():
         profile.name = "Altona"  # type: ignore[misc]
 
 
-# --- Hamburg profile == values still hard-coded (until CHAT-5) --------------
-
-
-def test_hamburg_profile_matches_hardcoded_values():
-    """The data sources are built from the profile now; the default
-    location and extent are still hard-coded until the next CHAT-5 step.
-    Fail if the two drift apart until then."""
-
-    from cwym_agent.geodata import real_data_services
-    from cwym_agent.geodata.types import HAMBURG_EXTENT
-
-    p = load_profile("hamburg")
-
-    assert p.extent == HAMBURG_EXTENT
-    default = real_data_services._DEFAULT_LOCATION
-    assert (p.default_location.name, p.default_location.lat, p.default_location.lon) == (
-        default.name, default.latitude, default.longitude,
-    )
-
-
 # --- pipeline wiring -------------------------------------------------------
 
 
@@ -217,6 +197,7 @@ def test_startup_aborts_on_invalid_profile(monkeypatch, tmp_path, caplog):
     monkeypatch.setenv("CWYM_PROFILES_DIR", str(tmp_path))
     monkeypatch.setenv("CWYM_CITY_PROFILE", "missing")
     main.get_pipeline.cache_clear()
+    main.get_city_profile.cache_clear()
     monkeypatch.setattr(main, "get_pipeline", lambda: pytest.fail("warm-up must not start"))
 
     async def run_lifespan():
@@ -232,6 +213,7 @@ def test_startup_aborts_on_invalid_profile(monkeypatch, tmp_path, caplog):
     finally:
         monkeypatch.undo()
         main.get_pipeline.cache_clear()
+        main.get_city_profile.cache_clear()
 
 
 def test_profiles_dir_env(monkeypatch, tmp_path):
