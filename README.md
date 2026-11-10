@@ -137,7 +137,9 @@ Qwen3Settings` and `cwym_agent.geodata.settings.GeodataSettings`):
 | `CWYM_CORS_ALLOW_ORIGINS` | `*` | Comma-separated origins allowed to call the API - set to the portal origin(s) on a shared server |
 | `CWYM_FILTER_QUERYABLES_CACHE_TTL` | `3600` | Seconds `FilterAgent` trusts a fetched OGC API Features `/queryables` schema before re-fetching |
 | `CWYM_FILTER_RESULT_LIMIT` | `500` | Max features fetched per `FilterAgent` query |
-| `CWYM_FILTER_LLM_MAX_TOKENS` | `4096` | Token budget for `FilterAgent`'s condition-extraction LLM call (OAF and WFS) |
+| `CWYM_FILTER_LLM_MAX_TOKENS` | `4096` | Token budget for `FilterAgent`'s condition-extraction LLM call (OAF and WFS), also used by the tier 1 analysis extraction |
+| `CWYM_ANALYSIS_PAGE_SIZE` | `1000` | Tier 1: features fetched per page when an analysis needs all matches |
+| `CWYM_ANALYSIS_MAX_FEATURES` | `10000` | Tier 1: the most features an analysis fetches; above it the answer says the data is too large instead of computing on part of it |
 | `CWYM_LOG_LEVEL` | `INFO` | Root log level |
 | `CWYM_LOG_FORMAT` | `text` | `text` (human-readable, `[thread/run]` prefix) or `json` (one object per line, for log shippers) |
 | `CWYM_TRACE_CONTENT` | `full` | What the run traces contain: `full` (query, history, prompts, reasoning, answer) or `metadata` (user-written text replaced by its length) - see "Logging & traces" |
@@ -185,6 +187,51 @@ Endpoint environment variables (`CWYM_*_URL`) keep overriding.
 
 In Docker the profiles are copied to `/app/profiles`; mount a directory
 there to use other profiles.
+
+## Built-in analysis (tier 1)
+
+Simple analyses of one dataset are computed by CWYM itself, in seconds
+(`cmym-agent-architecture.md` 14.4): count, distribution, top-N, min,
+max, average, sum and lookup by address. The planner asks for one by
+setting `operation` on `filter_agent`; the LLM only translates the
+question into conditions and the attribute, everything that produces a
+number is code, and the reply is a fixed template (German or English) -
+no LLM rewords the numbers.
+
+- **Any filterable layer** (WFS/OAF) can be counted, e.g. "Wie viele
+  Krankenhäuser gibt es in Wandsbek?".
+- **Everything else needs a dataset declared in the profile** - the data
+  source and typed attributes, so that years stored as text sort as
+  numbers and energy classes by their order:
+
+  ```yaml
+  datasets:
+    buildings:
+      label: {de: Gebäude, en: buildings}
+      source: {type: file, path: buildings.geojson}   # or {type: wfs, url, feature_type} / {type: oaf, url, collection}
+      id_field: gebid
+      lookup_field: adresse        # lookups by address
+      layers: [gsm:ascend_gebaeude_gfi]   # portal layers that show the dataset
+      attributes:
+        baujahr: {label: {de: Baujahr, en: year of construction}, type: number, bin_width: 10}
+        eigentuemer: {label: {de: Eigentümer, en: owner}, type: category, top: 5}
+        energieeffizienzklasse:
+          label: {de: Energieeffizienzklasse, en: energy efficiency class}
+          type: ordinal
+          order: [A+, A, B, C, D, E, F, G, H]
+          colors: {H: "#991b1b"}
+          display_layer: gsm:ascend_baugruppen_energieeffizienzklasse
+  ```
+
+  Hamburg declares none yet, so in Hamburg tier 1 counts.
+- **No number from part of the data.** Aggregates page through all
+  matches up to `CWYM_ANALYSIS_MAX_FEATURES`; above that, or when a
+  service fails, the reply says so instead of giving a number. Missing
+  values are counted ("keine Angabe") and the reply says what was left
+  out.
+
+Spatial or multi-step questions (nearest, distances, several layers) go
+to the tier 2 analysis agent where the profile has one (Hamburg: UDP).
 
 ## Answer language
 
