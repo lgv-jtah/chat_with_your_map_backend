@@ -135,6 +135,7 @@ def test_id_must_match_directory(tmp_path, monkeypatch):
         (lambda d: d["boundaries"]["collections"].update(ortsteil={"collection": "x", "name_field": "y"}),
          "['ortsteil']"),
         (lambda d: d.update(analysis_agent={"adapter": "magic"}), "analysis_agent.adapter"),
+        (lambda d: d["geocoder"]["place_types"].update(county="Bezirk"), "geocoder.place_types.county"),
     ],
 )
 def test_invalid_values_name_the_field(tmp_path, monkeypatch, mutate, expected):

@@ -277,6 +277,7 @@ class TestFilterAgentDispatch:
                 forwarded_props={},
             ),
             catalog,
+            ["address", "bezirk", "stadtteil"],
         )
         plan = {
             "steps": [

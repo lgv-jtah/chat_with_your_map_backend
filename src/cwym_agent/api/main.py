@@ -192,6 +192,7 @@ async def query_endpoint(
     inp: RunAgentInput,
     pipeline: Pipeline = Depends(get_pipeline),
     portal_catalog_resolver: PortalCatalogResolver = Depends(get_portal_catalog_resolver),
+    profile: CityProfile = Depends(get_city_profile),
 ):
     # Every log line of this request - including the ones from the
     # pipeline's worker thread, which runs in a copy of this context -
@@ -223,7 +224,7 @@ async def query_endpoint(
     allowed_layer_ids = list(catalog.names()) if catalog is not None else None
 
     try:
-        context = build_context(inp, catalog)
+        context = build_context(inp, catalog, profile.location_kinds)
     except ValidationError as exc:
         logger.warning("Rejected request (400): invalid state - %s", exc)
         raise HTTPException(status_code=400, detail=str(exc)) from exc

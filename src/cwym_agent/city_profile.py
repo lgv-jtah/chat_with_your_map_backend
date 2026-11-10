@@ -55,6 +55,13 @@ def _http_url(value: str) -> str:
 
 HttpUrlStr = Annotated[str, AfterValidator(_http_url)]
 
+LocationKind = Annotated[str, Field(pattern=r"^[a-z][a-z0-9_]*$", max_length=40)]
+"""A CWYM location kind: a city's own name for a kind of place (Hamburg:
+bezirk, stadtteil, address). The profile defines them (values of
+``geocoder.place_types``); they travel to the frontend in map commands
+and come back in the client state (``lastLocation``, ``filterSpec.area``),
+and the planner sees them in its context block."""
+
 
 class DefaultLocation(_Strict):
     """Where 'the city' itself points to (the address search usually has no
@@ -72,7 +79,7 @@ class GeocoderConfig(_Strict):
     # street hits for a bare place name).
     broad_types: list[str] = Field(min_length=1)
     # Raw place type -> CWYM location kind (e.g. county -> bezirk).
-    place_types: dict[str, str] = Field(min_length=1)
+    place_types: dict[str, LocationKind] = Field(min_length=1)
 
 
 class LayerCatalogConfig(_Strict):
@@ -92,7 +99,7 @@ class BoundariesConfig(_Strict):
     # boundary dataset doesn't have ("Hamburg-Harburg" -> "Harburg").
     strip_name_prefixes: list[str] = Field(default_factory=list)
     # CWYM location kind -> collection holding its official outlines.
-    collections: dict[str, BoundaryCollection] = Field(min_length=1)
+    collections: dict[LocationKind, BoundaryCollection] = Field(min_length=1)
 
 
 class AnalysisAgentConfig(_Strict):
