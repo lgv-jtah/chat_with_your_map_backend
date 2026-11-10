@@ -64,13 +64,17 @@ class _RecordingLlm:
         self.generate_reply = generate_reply
         self.plan_prompts: list[str] = []
         self.generate_prompts: list[tuple[str, str]] = []
+        self.system_prompts: list[tuple[str, str | None]] = []
 
     def plan(self, prompt: str, *, system_prompt, tools, streaming_callback=None) -> dict:
         self.plan_prompts.append(prompt)
         return {"steps": []}
 
-    def generate(self, prompt: str, streaming_callback=None, max_tokens=None, label="generate") -> str:
+    def generate(
+        self, prompt: str, streaming_callback=None, max_tokens=None, label="generate", system_prompt=None
+    ) -> str:
         self.generate_prompts.append((label, prompt))
+        self.system_prompts.append((label, system_prompt))
         return self.generate_reply
 
 
@@ -151,15 +155,17 @@ class TestResponsePrompts:
     _LOCATION = LocationMatch("Wandsbek", 53.5794, 10.0911, 0.9, kind="bezirk")
     _LAYER = LayerMatch("StadtRAD-Stationen", "27764", 0.9)
 
-    def _render(self, aggregated: dict, commands: list) -> str:
+    def _render(self, aggregated: dict, commands: list, language: str | None = None) -> str:
         llm = _RecordingLlm(generate_reply="Antwort")
-        TextResponseComponent(llm=llm).run(
+        TextResponseComponent(_PROFILE, llm=llm).run(
             aggregated,
             "Zeig mir Fahrradstationen in Wandsbek",
             commands=commands,
             context=_FOLLOW_UP_CONTEXT,
             layer_catalog=_CATALOG,
+            language=language,
         )
+        self.system_prompt = llm.system_prompts[0][1]
         return llm.generate_prompts[0][1]
 
     def test_success(self):
@@ -243,10 +249,10 @@ class TestFilterPrompt:
 
 class TestFixedTexts:
     def test_clarification_question(self):
-        assert_snapshot("clarification_question", clarification.question(["Altona", "Altona-Altstadt"]))
+        assert_snapshot("clarification_question", clarification.question(["Altona", "Altona-Altstadt"], "de"))
 
     def test_analysis_failure_reply(self):
-        assert_snapshot("analysis_failure_reply", TextResponseComponent._analysis_reply(_AnalysisWithoutAnswer()))
+        assert_snapshot("analysis_failure_reply", TextResponseComponent._analysis_reply(_AnalysisWithoutAnswer(), "de"))
 
 
 class _AnalysisWithoutAnswer:
@@ -324,6 +330,51 @@ class TestOtherCity:
     def test_no_analysis_tool_without_analysis_agent(self):
         profile = self._profile().model_copy(update={"analysis_agent": None})
 
-        names = [tool["function"]["name"] for tool in plan_request(profile)["tools"]]
+        names = [tool["function"]["name"] for tool in plan_request(profile, "de")["tools"]]
 
         assert "udp_analysis" not in names and "location_extractor" in names
+
+
+class TestEnglish:
+    """CHAT-7: an English answer. The prompts stay German; they name the
+    query's/answer's language, and the reply prompt ends with a directive."""
+
+    def test_plan_request(self):
+        client, recorder = _qwen3_with_recorder()
+        MasterAgentComponent(_PROFILE, llm=client).run("Show me schools in Wandsbek", language="en")
+
+        call = recorder.calls[0]
+        assert_snapshot("plan_request_en", _dump({"messages": call["messages"], "tools": call["tools"]}))
+
+    def test_reply_prompts_and_system_prompt(self):
+        responses = TestResponsePrompts()
+        location = TestResponsePrompts._LOCATION
+        layer = TestResponsePrompts._LAYER
+        filter_result = FilterResult(
+            layer_id="27764", features={"type": "FeatureCollection", "features": []}, number_matched=12,
+            label="Wandsbek", area_kind="bezirk",
+        )
+        success = {"locations": [location], "layer": layer, "action": ActionMatch("Zeigen", 0.85), "filter_result": filter_result}
+
+        assert_snapshot("response_success_en", responses._render(success, [{"type": "APPLY_FILTER", "payload": {"layerId": "27764"}}], "en"))
+        assert_snapshot("answer_system_prompt_en", responses.system_prompt)
+        assert_snapshot(
+            "response_filter_failed_en",
+            responses._render({"locations": [location], "layer": layer, "filter_failed": True}, [{"type": "ACTIVATE_LAYER", "payload": {"layerId": "27764"}}], "en"),
+        )
+        assert_snapshot("response_no_commands_en", responses._render({}, [], "en"))
+
+    def test_fixed_texts(self):
+        assert_snapshot("clarification_question_en", clarification.question(["Altona", "Altona-Altstadt"], "en"))
+        assert_snapshot("analysis_failure_reply_en", TextResponseComponent._analysis_reply(_AnalysisWithoutAnswer(), "en"))
+
+    def test_german_reply_keeps_the_default_system_prompt(self):
+        client, recorder = _qwen3_with_recorder()
+        client.generate("PROMPT")
+        default = recorder.calls[0]["messages"][0]["content"]
+
+        responses = TestResponsePrompts()
+        responses._render({}, [])
+        assert responses.system_prompt == default
+        responses._render({}, [], "de")
+        assert responses.system_prompt == default

@@ -5,6 +5,7 @@ so assertions can inspect the actual prompt text the component built,
 the same pattern used elsewhere for a cheap, deterministic LLM double.
 """
 
+from cwym_agent.city_profile import load_profile
 from cwym_agent.components.text_response import TextResponseComponent
 from cwym_agent.geodata.conversation_context import ConversationContext, MapStateIn
 from cwym_agent.geodata.portal_catalog_resolver import LayerCatalog
@@ -15,7 +16,8 @@ _LOCATION = LocationMatch(name="Wandsbek", latitude=53.6, longitude=10.1, confid
 _LAYER = LayerMatch(name="StadtRAD-Stationen Hamburg", layer_id="27764", confidence=0.9)
 _ACTION = ActionMatch("Zeigen", 0.9)
 
-component = TextResponseComponent(llm=StubQwen3Generator())
+_PROFILE = load_profile("hamburg")
+component = TextResponseComponent(_PROFILE, llm=StubQwen3Generator())
 
 
 def _aggregated(**overrides) -> dict:
@@ -146,14 +148,14 @@ class TestAnalysisReply:
             raise AssertionError("an analysis reply must not go through the LLM")
 
     def test_udp_answer_passed_through_verbatim(self):
-        component = TextResponseComponent(llm=self._NoLLM())
+        component = TextResponseComponent(_PROFILE, llm=self._NoLLM())
         answer = "Im Bezirk Altona gibt es **19** StadtRAD-Stationen."
         aggregated = _aggregated(query="Wie viele?", analysis_result=AnalysisResult(answer=answer))
 
         assert component.run(aggregated, "Wie viele?", commands=[])["response_text"] == answer
 
     def test_failed_analysis_says_so(self):
-        component = TextResponseComponent(llm=self._NoLLM())
+        component = TextResponseComponent(_PROFILE, llm=self._NoLLM())
         aggregated = _aggregated(query="Wie viele?", analysis_result=AnalysisResult(answer=None, error="timeout"))
 
         text = component.run(aggregated, "Wie viele?", commands=[])["response_text"]
@@ -176,7 +178,7 @@ class TestAmbiguousLocationReply:
     def test_three_areas(self):
         location = LocationMatch("A-Nord", 1, 1, 1, alternatives=["A-Süd", "A-West"])
 
-        assert component._ambiguous_location_reply(location) == (
+        assert component._ambiguous_location_reply(location, "de") == (
             "Den Ort gibt es mehrfach – meinst du A-Nord, A-Süd oder A-West? Die Karte habe ich noch nicht verändert."
         )
 
@@ -187,7 +189,7 @@ class TestFilterFailedIsAdmitted:
             query="Grundschulen in Hoheluft-West", layer=_LAYER, locations=[_LOCATION], action=_ACTION, filter_failed=True
         )
 
-        prompt = component._build_response_prompt(aggregated, "q", [{"type": "ACTIVATE_LAYER"}])
+        prompt = component._build_response_prompt(aggregated, "q", [{"type": "ACTIVATE_LAYER"}], None, None, "de")
 
         assert "konnte NICHT angewendet" in prompt
         assert "auf Wandsbek" in prompt
@@ -196,4 +198,4 @@ class TestFilterFailedIsAdmitted:
     def test_normal_prompt_without_failure(self):
         aggregated = _aggregated(layer=_LAYER, locations=[_LOCATION], action=_ACTION)
 
-        assert "NICHT angewendet" not in component._build_response_prompt(aggregated, "q", [{"type": "ACTIVATE_LAYER"}])
+        assert "NICHT angewendet" not in component._build_response_prompt(aggregated, "q", [{"type": "ACTIVATE_LAYER"}], None, None, "de")

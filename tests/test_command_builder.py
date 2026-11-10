@@ -144,6 +144,17 @@ class TestOpenTool:
 
         assert builder._build_commands(aggregated) == []
 
+    def test_english_tool_requests(self):
+        for query, tool in [
+            ("Open the legend", "LEGEND"), ("Show me the legend", "LEGEND"), ("Open the contact form", "CONTACT"),
+            ("Print the map", "PRINT"), ("Show me the imprint", "ABOUT"), ("Open about us", "ABOUT"),
+        ]:
+            commands = builder._build_commands(_aggregated("Zeigen", query=query))
+            assert [(c["type"], c["payload"]["toolName"]) for c in commands] == [("OPEN_TOOL", tool)], query
+
+    def test_about_alone_is_no_tool_request(self):
+        assert builder._build_commands(_aggregated("Zeigen", query="Tell me about yourself")) == []
+
     def test_zeigen_without_tool_or_anything_resolved_builds_nothing(self):
         aggregated = _aggregated("Zeigen", query="Wie geht es dir?")
 

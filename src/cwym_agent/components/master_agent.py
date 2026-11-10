@@ -1,6 +1,6 @@
 """``MasterAgentComponent``: query planning.
 
-Analyzes the (German) user query and produces an execution plan deciding
+Analyzes the user query (German or English) and produces an execution plan deciding
 which sub-agents ``AgentExecutorComponent`` should call. Uses the Qwen3
 reasoning trace during planning, streamed into the AG-UI bridge as a
 ``REASONING_*`` event sequence when a bridge is provided.
@@ -32,6 +32,7 @@ from cwym_agent.geodata.conversation_context import (
     render_context_block,
 )
 from cwym_agent.geodata.portal_catalog_resolver import LayerCatalog
+from cwym_agent.language import LANGUAGE_NAMES
 from cwym_agent.llm.qwen3_client import Qwen3Client
 from cwym_agent.sub_agents import as_openai_tools, sub_agent_specs
 
@@ -40,7 +41,7 @@ logger = logging.getLogger(__name__)
 _PLAN_SYSTEM_PROMPT = (
     "Du bist der Planungs-Agent von CWYM (Chat with your Map), einem "
     "Chatbot für {city_genitive} Masterportal-Kartensystem. Analysiere die "
-    "deutsche Nutzeranfrage und rufe die passenden Werkzeuge auf, um "
+    "{query_language} Nutzeranfrage und rufe die passenden Werkzeuge auf, um "
     "Ort, Kartenebene und/oder gewünschte Aktion aufzulösen. Rufe nur "
     "die Werkzeuge auf, die für die Anfrage tatsächlich relevant sind. "
     "Wenn die Anfrage keinen Bezug zur Karte hat (z.B. Small Talk), rufe "
@@ -48,12 +49,17 @@ _PLAN_SYSTEM_PROMPT = (
 )
 
 
-def plan_request(profile: CityProfile) -> dict:
-    """The planner's system prompt and tools for ``profile``'s city, as
-    keyword arguments for ``llm.plan()``."""
+def plan_request(profile: CityProfile, language: str) -> dict:
+    """The planner's system prompt and tools for ``profile``'s city and a
+    query in ``language``, as keyword arguments for ``llm.plan()``. The
+    prompts stay German for every language (the data is German); only the
+    query's language is named."""
 
     return {
-        "system_prompt": _PLAN_SYSTEM_PROMPT.format(city_genitive=profile.prompt.city_genitive),
+        "system_prompt": _PLAN_SYSTEM_PROMPT.format(
+            city_genitive=profile.prompt.city_genitive,
+            query_language=LANGUAGE_NAMES[language].adjective,
+        ),
         "tools": as_openai_tools(sub_agent_specs(profile)),
     }
 
@@ -62,7 +68,8 @@ def plan_request(profile: CityProfile) -> dict:
 class MasterAgentComponent:
     def __init__(self, profile: CityProfile, llm: Any | None = None):
         self.llm = llm if llm is not None else Qwen3Client()
-        self._plan_request = plan_request(profile)
+        self.default_language = profile.default_language
+        self._plan_requests = {language: plan_request(profile, language) for language in profile.languages}
 
     @component.output_types(plan_json=dict)
     def run(
@@ -71,7 +78,12 @@ class MasterAgentComponent:
         context: ConversationContext | None = None,
         layer_catalog: LayerCatalog | None = None,
         bridge: AGUIEventBridge | None = None,
+        language: str | None = None,
     ):
+        """:param language: the answer language (ISO 639-1) resolved for
+        this turn; None means the profile's default."""
+
+        request = self._plan_requests[language or self.default_language]
         prompt = self._build_planning_prompt(query, context, layer_catalog)
         observability.set_planning_prompt(prompt)
 
@@ -79,12 +91,12 @@ class MasterAgentComponent:
             reasoning_tokens: list[str] = []
             plan = self.llm.plan(
                 prompt,
-                **self._plan_request,
+                **request,
                 streaming_callback=lambda chunk: reasoning_tokens.append(chunk.content),
             )
             bridge.reasoning("".join(reasoning_tokens))
         else:
-            plan = self.llm.plan(prompt, **self._plan_request)
+            plan = self.llm.plan(prompt, **request)
 
         steps = plan.get("steps", [])
         if not steps:

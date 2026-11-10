@@ -128,6 +128,7 @@ def test_id_must_match_directory(tmp_path, monkeypatch):
         (lambda d: d.update(languages=[]), "languages"),
         (lambda d: d.update(languages=["DE"]), "two lowercase letters"),
         (lambda d: d.update(languages=["de", "de"]), "unique"),
+        (lambda d: d.update(languages=["de", "fr"]), "can't answer in ['fr']"),
         (lambda d: d.update(extent=[10.9, 52.8, 9.1, 54.1]), "min < max"),
         (lambda d: d["default_location"].update(lat=9.9937, lon=53.5511), "outside extent"),
         (lambda d: d["geocoder"].update(url="api.hamburg.de/addr_search"), "http(s) URL"),

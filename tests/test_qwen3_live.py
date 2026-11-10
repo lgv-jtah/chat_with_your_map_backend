@@ -32,7 +32,7 @@ def test_plan_resolves_location_and_layer_tools(client: Qwen3Client):
 
     result = client.plan(
         "Zeige mir Fahrradstationen in Altona",
-        **plan_request(load_profile("hamburg")),
+        **plan_request(load_profile("hamburg"), "de"),
         streaming_callback=lambda chunk: reasoning_chunks.append(chunk.content),
     )
 

@@ -1828,6 +1828,20 @@ Data sources sit behind `Protocol`s: `Geocoder`, `LayerCatalogSource`, `Boundary
 - A language directive at the end of the reply prompt pins the answer language (as in ASCEND).
 - The addon's UI strings move to `$t()` with de/en locale files.
 
+**Implemented (CHAT-7)**, with two deviations from the plan above:
+
+- The prompts stay German for both languages, as ASCEND keeps one prompt set: the data (layer names, filter values, places) is German and the German prompts are tuned.
+  They name the query's and the answer's language ("die englische Nutzeranfrage", "eine englische Antwort"), and an English reply prompt ends with an English directive that pins the language and keeps German names as they are.
+  Internal calls (layer query expansion and disambiguation, filter extraction) keep the German system prompt, which also keeps the expansion's search terms German - the bridge from an English query to the German catalog.
+- The fallback is the user's earlier messages, then the portal's current UI language (`forwardedProps.ui_language`, sent by the addon), then the profile's default.
+  `portal_context.languages` lists the languages a portal offers (Hamburg's starts with `de`), so it can't tell the UI language and stays unused.
+
+`cwym_agent/language.py` holds the detector (ASCEND's stop-word heuristic with its flaws fixed: no markers shared with the other language or with Romance languages, umlauts only break ties, map nouns for short commands) and the fallback chain.
+The fixed texts exist in both languages; the clarification parser reads both, so the user can switch in between.
+Action and tool keywords match English too, and at word starts only ("geöffnete Apotheken" no longer opens a tool).
+The run trace records `language` and `languageSource`.
+A profile can list only languages CWYM supports (`de`, `en`); Hamburg offers both.
+
 ### 14.4 Analysis in two tiers
 
 Munich has no UDP agent, but CWYM has to work fully in both cities. So analysis is split into a built-in tier every city has, and an optional external tier a city can add. The profile decides which tiers exist, not the code.
@@ -1915,7 +1929,7 @@ New MapCommands, in `map_commands.py` and `docs/frontend-api.md`:
 1. `CityProfile` and loader; a Hamburg profile that reproduces today's behaviour. Done (CHAT-3).
 2. Move the Hamburg-specific code (14.1) behind the `Protocol`s. Done (CHAT-5, 14.3).
 3. `ChatLLMClient` (optional reasoning, `CWYM_LLM_*`), live test against IONOS.
-4. Language detection, bilingual prompts, use of `portal_context.languages`.
+4. Language detection, bilingual prompts, use of `portal_context.languages`. Done (CHAT-7, 14.3).
 5. Munich profile: check and adapt the geocoder, layer index and boundary sources.
 6. Munich portal on Masterportal 3.27 with the `chatWithYourMap` addon (inline `portal_context` handles the remote `services-internet.json`).
 7. Addon i18n.

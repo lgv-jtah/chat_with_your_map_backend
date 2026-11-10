@@ -2,7 +2,7 @@
 
 from cwym_agent.geodata.clarification import question, resolve_reply
 
-_ASKED = question(["Hoheluft-Ost", "Hoheluft-West"])
+_ASKED = question(["Hoheluft-Ost", "Hoheluft-West"], "de")
 _HISTORY = [("user", "Ich möchte mir alle Grundschulen in Hoheluft anschauen"), ("assistant", _ASKED)]
 
 
@@ -12,7 +12,7 @@ class TestQuestion:
             "Den Ort gibt es mehrfach – meinst du Hoheluft-Ost oder Hoheluft-West? "
             "Die Karte habe ich noch nicht verändert."
         )
-        assert question(["A-Nord", "A-Süd", "A-West"]).startswith("Den Ort gibt es mehrfach – meinst du A-Nord, A-Süd oder A-West?")
+        assert question(["A-Nord", "A-Süd", "A-West"], "de").startswith("Den Ort gibt es mehrfach – meinst du A-Nord, A-Süd oder A-West?")
 
 
 class TestResolveReply:
@@ -25,7 +25,7 @@ class TestResolveReply:
         assert resolve_reply("hoheluft west bitte", _HISTORY).endswith("in Hoheluft-West anschauen")
 
     def test_three_options(self):
-        history = [("user", "Kitas in Barmbek"), ("assistant", question(["Barmbek-Nord", "Barmbek-Süd", "Barmbek-Uhlenhorst"]))]
+        history = [("user", "Kitas in Barmbek"), ("assistant", question(["Barmbek-Nord", "Barmbek-Süd", "Barmbek-Uhlenhorst"], "de"))]
 
         assert resolve_reply("Süd", history) == "Kitas in Barmbek-Süd"
 
@@ -43,3 +43,23 @@ class TestResolveReply:
         history = [("user", "Grundschulen dort"), ("assistant", _ASKED)]
 
         assert resolve_reply("West", history) == "Grundschulen dort (Hoheluft-West)"
+
+
+class TestEnglish:
+    _ASKED_EN = question(["Hoheluft-Ost", "Hoheluft-West"], "en")
+
+    def test_wording(self):
+        assert self._ASKED_EN == (
+            "There are several places with this name – do you mean Hoheluft-Ost or Hoheluft-West? "
+            "I haven't changed the map yet."
+        )
+
+    def test_reply_to_an_english_question(self):
+        history = [("user", "Show me primary schools in Hoheluft"), ("assistant", self._ASKED_EN)]
+
+        assert resolve_reply("the west one", history) == "Show me primary schools in Hoheluft-West"
+
+    def test_language_switch_between_question_and_answer(self):
+        assert resolve_reply("West please", _HISTORY) == "Ich möchte mir alle Grundschulen in Hoheluft-West anschauen"
+        history = [("user", "Primary schools in Barmbek"), ("assistant", question(["Barmbek-Nord", "Barmbek-Süd", "Barmbek-Uhlenhorst"], "en"))]
+        assert resolve_reply("Süd bitte", history) == "Primary schools in Barmbek-Süd"

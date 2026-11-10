@@ -31,6 +31,7 @@ from cwym_agent.bridge import AGUIEventBridge
 from cwym_agent.city_profile import CityProfile, CityProfileError, load_profile
 from cwym_agent.geodata import clarification
 from cwym_agent.geodata.conversation_context import build_context, current_query
+from cwym_agent.language import resolve_language
 from cwym_agent.geodata.portal_catalog_resolver import PortalCatalogResolver, build_inline_catalog
 from cwym_agent.geodata.settings import GeodataSettings
 from cwym_agent.observability import bind_ids, configure_logging, start_run
@@ -170,6 +171,8 @@ class PortalContext(BaseModel):
     config_json_url: str | None = None
     services_json_url: str | None = None
     languages: list[str] = ["de"]
+    """The languages the portal offers - not read. The answer language comes
+    from the message, falling back to ``forwardedProps.ui_language``."""
 
     @model_validator(mode="after")
     def _exactly_one_mode(self):
@@ -229,6 +232,13 @@ async def query_endpoint(
         logger.warning("Rejected request (400): invalid state - %s", exc)
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
+    # The answer language: the user's message as typed, earlier messages,
+    # the portal's UI language, the profile's default (CHAT-7).
+    ui_language = (inp.forwarded_props or {}).get("ui_language")
+    language = resolve_language(
+        query, context.history, ui_language if isinstance(ui_language, str) else None, profile.languages
+    )
+
     # "Hoheluft-West" as the answer to "meinst du Hoheluft-Ost oder
     # Hoheluft-West?" becomes the complete original question again.
     original_query = query
@@ -259,11 +269,19 @@ async def query_endpoint(
                 stateIn=inp.state,
                 portalContext=portal_context_mode,
                 catalogLayers=len(allowed_layer_ids) if allowed_layer_ids is not None else None,
+                language=language.code,
+                languageSource=language.source,
             )
             if trace.content == "full":
-                logger.info("Run started: %r (history: %d messages)", query, len(context.history))
+                logger.info(
+                    "Run started: %r (history: %d messages, language: %s from %s)",
+                    query, len(context.history), language.code, language.source,
+                )
             else:
-                logger.info("Run started (history: %d messages)", len(context.history))
+                logger.info(
+                    "Run started (history: %d messages, language: %s from %s)",
+                    len(context.history), language.code, language.source,
+                )
 
             run_pipeline(
                 pipeline,
@@ -272,6 +290,7 @@ async def query_endpoint(
                 allowed_layer_ids=allowed_layer_ids,
                 context=context,
                 layer_catalog=catalog,
+                language=language.code,
             )
             bridge.run_finished()
         except Exception as exc:  # noqa: BLE001 - surfaced to the client as RUN_ERROR

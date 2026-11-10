@@ -14,28 +14,46 @@ before planning.
 import os
 import re
 from collections.abc import Sequence
+from dataclasses import dataclass
 
-_QUESTION_PREFIX = "Den Ort gibt es mehrfach – meinst du "
-_QUESTION_SUFFIX = "? Die Karte habe ich noch nicht verändert."
-_QUESTION_PATTERN = re.compile(re.escape(_QUESTION_PREFIX) + r"(.+?)" + re.escape(_QUESTION_SUFFIX))
+@dataclass(frozen=True)
+class _Wording:
+    prefix: str
+    last_separator: str
+    suffix: str
+
+    @property
+    def pattern(self) -> re.Pattern:
+        return re.compile(re.escape(self.prefix) + r"(.+?)" + re.escape(self.suffix))
 
 
-def question(names: Sequence[str]) -> str:
+_WORDING = {
+    "de": _Wording("Den Ort gibt es mehrfach – meinst du ", " oder ", "? Die Karte habe ich noch nicht verändert."),
+    "en": _Wording("There are several places with this name – do you mean ", " or ", "? I haven't changed the map yet."),
+}
+
+
+def question(names: Sequence[str], language: str) -> str:
     """The question back, e.g. "Den Ort gibt es mehrfach – meinst du
     Hoheluft-Ost oder Hoheluft-West? Die Karte habe ich noch nicht
     verändert." - fixed text (not LLM-written), so ``resolve_reply`` can
     read the offered places back from the chat history."""
 
-    options = ", ".join(names[:-1]) + f" oder {names[-1]}" if len(names) > 1 else names[0]
-    return f"{_QUESTION_PREFIX}{options}{_QUESTION_SUFFIX}"
+    wording = _WORDING[language]
+    options = ", ".join(names[:-1]) + f"{wording.last_separator}{names[-1]}" if len(names) > 1 else names[0]
+    return f"{wording.prefix}{options}{wording.suffix}"
 
 
 def _offered_names(answer: str) -> list[str]:
-    match = _QUESTION_PATTERN.search(answer)
-    if match is None:
-        return []
-    head, _, last = match.group(1).rpartition(" oder ")
-    return [name.strip() for name in head.split(", ") if name.strip()] + [last.strip()]
+    """The places offered by a question in any language - the user may
+    switch language between the question and the answer."""
+
+    for wording in _WORDING.values():
+        match = wording.pattern.search(answer)
+        if match is not None:
+            head, _, last = match.group(1).rpartition(wording.last_separator)
+            return [name.strip() for name in head.split(", ") if name.strip()] + [last.strip()]
+    return []
 
 
 def _words(text: str) -> set[str]:

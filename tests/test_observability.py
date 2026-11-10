@@ -153,6 +153,8 @@ class TestMetadataMode:
             mapState={"activeLayerIds": ["8712"], "filters": [], "lastLocation": {"name": "Musterstraße 1", "kind": "address"}},
             stateIn={"lastLocation": {"name": "Musterstraße 1", "kind": "address"}},
             catalogLayers=12,
+            language="en",
+            languageSource="history",
         )
         trace.set_planning_prompt("Nutzeranfrage: Musterstraße 1")
         trace.record_llm_call("text_response", 1.0, prompt="Musterstraße 1", output="Musterstraße 1")
@@ -177,6 +179,7 @@ class TestMetadataMode:
         assert record["request"]["query"] == {"chars": len("Wo wohnt Max Mustermann, Musterstraße 1?")}
         assert record["request"]["history"] == [{"role": "user", "text": {"chars": 14}}]
         assert record["request"]["catalogLayers"] == 12
+        assert (record["request"]["language"], record["request"]["languageSource"]) == ("en", "history")
         assert record["request"]["mapState"] == {
             "activeLayerIds": ["8712"],
             "filterLayerIds": [],
