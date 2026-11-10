@@ -3,7 +3,7 @@
 The reply LLM ends its answer with a block
 
     VORSCHLÄGE:
-    - Zeige Schulen in Altona
+    - Zeige Schulen in <Ort>
     - Wie viele Kitas gibt es dort?
 
 which must not reach the user as text: ``SuggestionSplitter`` passes the
@@ -26,13 +26,19 @@ _ITEM_PREFIX = re.compile(r"^\s*(?:[-*•–]|\d+[.)])\s*")
 INSTRUCTION = {
     "de": (
         "\n\nHänge an die Antwort eine Zeile 'VORSCHLÄGE:' an und darunter bis "
-        "zu 3 kurze Folgefragen, die der Nutzer als Nächstes stellen könnte - je "
-        "eine pro Zeile, mit '- ' davor, als direkte Aufforderung in der Sprache "
-        "der Antwort (z. B. '- Zeige Schulen in der Nähe'), höchstens 8 Wörter. "
-        "Nur Fragen, die mit der Karte beantwortbar sind."
+        "zu 3 nächste Schritte, die der Nutzer als Nächstes eingeben könnte - je "
+        "einer pro Zeile mit '- ' davor, höchstens 8 Wörter, in der Sprache der "
+        "Antwort, als vollständige Aufforderung mit dem Namen der Ebene oder des "
+        "Ortes (z. B. '- Zeige Schulen in {place1}', '- Wie viele Kitas gibt es in "
+        "{place2}?'). Schlage nur vor, was diese Karte kann: Ebenen anzeigen oder "
+        "ausblenden, nach Merkmalen oder Gebieten filtern, zu Orten navigieren, "
+        "Objekte einer Ebene zählen, Kartenwerkzeuge öffnen (Legende, Drucken). "
+        "NICHT vorschlagen: Routen, Wegbeschreibungen, Entfernungen zum eigenen "
+        "Standort, Echtzeitdaten wie freie Plätze, oder was gerade schon gezeigt wurde."
     ),
 }
-"""Appended to the (German) reply prompt, before any language directive."""
+"""Appended to the (German) reply prompt, before any language directive;
+``{place1}``/``{place2}`` are the profile's example places."""
 
 
 class SuggestionSplitter:

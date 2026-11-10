@@ -424,3 +424,17 @@ class TestSuggestionsPrompt:
         assert_snapshot("response_suggestions", german)
         assert_snapshot("response_suggestions_en", english)
         assert english.rstrip().endswith("keep that marker as it is.")
+
+
+def test_suggestions_prompt_uses_the_profiles_places():
+    profile = TestOtherCity._profile()
+    llm = _RecordingLlm(generate_reply="Antwort")
+    TextResponseComponent(profile, llm=llm).run(
+        {"locations": [], "layer": LayerMatch("Spielplätze", "1", 0.9)}, "Zeig mir Spielplätze",
+        commands=[{"type": "ACTIVATE_LAYER", "payload": {"layerIds": ["1"]}}],
+        supported_commands=frozenset({"SHOW_SUGGESTIONS"}),
+    )
+
+    prompt = llm.generate_prompts[0][1]
+    assert "Nordviertel" in prompt and "Südhafen" in prompt
+    assert not [w for w in TestOtherCity._HAMBURG_WORDS if w in prompt]

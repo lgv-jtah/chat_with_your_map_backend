@@ -90,6 +90,7 @@ class TextResponseComponent:
     def __init__(self, profile: CityProfile, llm: Any | None = None):
         self.llm = llm if llm is not None else Qwen3Client()
         self.default_language = profile.default_language
+        self.example_places = profile.prompt.example_places
 
     @component.output_types(response_text=str)
     def run(
@@ -223,7 +224,8 @@ class TextResponseComponent:
             # ASCEND's finding: they drift into the prompt's language.
             if directive:
                 directive += _SUGGESTIONS_LANGUAGE.format(name=names.english)
-            directive = SUGGESTIONS_INSTRUCTION["de"] + directive
+            place1, place2 = self.example_places[:2]
+            directive = SUGGESTIONS_INSTRUCTION["de"].format(place1=place1, place2=place2) + directive
 
         context_block = render_context_block(context, layer_catalog) if context is not None else ""
         context_note = (
