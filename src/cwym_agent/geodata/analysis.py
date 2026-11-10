@@ -164,6 +164,8 @@ class Computed:
     """top / lookup / min / max: the features, in result order."""
     tie_beyond: int = 0
     """top: more features share the value of the last row."""
+    descending: bool | None = None
+    """top: highest values (or the end of an ordinal's order) first."""
     unknown_values: list[str] = field(default_factory=list)
     """ordinal: values not in the declared order (counted, shown last)."""
     lookup_key: str | None = None
@@ -266,6 +268,7 @@ def top(
         invalid=column.invalid + sum(unknown.values()),
         tie_beyond=tie_beyond,
         unknown_values=sorted(unknown),
+        descending=descending,
     )
 
 
