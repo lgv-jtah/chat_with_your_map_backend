@@ -366,7 +366,7 @@ class CommandBuilderComponent:
 
         total_matched = filter_result.number_matched
         shown = len(filter_result.features.get("features", []))
-        truncated = total_matched is not None and total_matched > shown
+        truncated = filter_result.truncated or (total_matched is not None and total_matched > shown)
 
         commands: list[dict] = []
 

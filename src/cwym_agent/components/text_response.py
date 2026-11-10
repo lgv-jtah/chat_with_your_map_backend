@@ -226,11 +226,21 @@ class TextResponseComponent:
         if filter_result:
             # number_matched (OGC API Features' numberMatched) is optional
             # per spec - fall back to the returned feature count when the
-            # server didn't report it, rather than printing "None Treffer".
-            count = filter_result.number_matched
-            if count is None:
-                count = len(filter_result.features.get("features", []))
-            facts.append(f"Gefilterte Ergebnisse: {count} Treffer")
+            # result is complete, rather than printing "None Treffer". A
+            # result cut at the limit must not pass for the total
+            # (cmym-agent-architecture.md 14.4, rule 1).
+            shown = len(filter_result.features.get("features", []))
+            total = filter_result.number_matched
+            truncated = filter_result.truncated or (total is not None and total > shown)
+            if not truncated:
+                facts.append(f"Gefilterte Ergebnisse: {total if total is not None else shown} Treffer")
+            elif total is not None:
+                facts.append(f"Gefilterte Ergebnisse: {total} Treffer, davon nur {shown} auf der Karte angezeigt")
+            else:
+                facts.append(
+                    f"Gefilterte Ergebnisse: mehr als {shown} Treffer, die Gesamtzahl ist unbekannt; "
+                    f"nur {shown} auf der Karte angezeigt - nenne KEINE Gesamtzahl"
+                )
 
         for layer_id in cleared:
             name = layer_catalog.name(layer_id) if layer_catalog is not None else layer_id

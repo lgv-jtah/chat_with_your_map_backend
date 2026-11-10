@@ -139,6 +139,10 @@ class FilterResult:
     query (post-merge on a refine turn) - echoed back as
     ApplyFilterPayload.filterSpec.conditions so a later refinement has
     something to merge against."""
+    truncated: bool = False
+    """The service returned only part of what matched (cut at the result
+    limit): ``features`` is not everything, and ``number_matched`` is the
+    real total if known, else None."""
 
 
 @dataclass

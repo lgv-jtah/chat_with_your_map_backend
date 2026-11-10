@@ -171,16 +171,19 @@ def _inside(features: list[dict], boundary: dict) -> list[dict]:
 
 
 def _area_result(features: list[dict], location: LocationMatch | None, limit: int, number_matched):
-    """Applies the exact area check and works out the total: exact when
-    the service returned everything it matched, unknown (None) when the
-    result was cut at ``limit`` - the server's own total refers to the
-    rectangle, not the area."""
+    """Applies the exact area check and works out the total and whether
+    the result is cut off: (features, total, truncated).
 
-    if not (location and location.boundary):
-        return features, number_matched
-    kept = _inside(features, location.boundary)
+    The total is exact when the service returned everything it matched,
+    unknown (None) when the result was cut at ``limit`` - with an area,
+    the server's own total refers to the rectangle, not the area.
+    """
+
     complete = len(features) < limit and (number_matched is None or number_matched <= len(features))
-    return kept, len(kept) if complete else None
+    if not (location and location.boundary):
+        return features, number_matched, not complete
+    kept = _inside(features, location.boundary)
+    return kept, len(kept) if complete else None, not complete
 
 
 class QueryablesCache:
@@ -318,7 +321,7 @@ class FilterAgent:
             logger.warning("FilterAgent: OGC API Features query failed for %r (%s)", layer.name, exc)
             return None
 
-        features, number_matched = _area_result(
+        features, number_matched, truncated = _area_result(
             data.get("features") or [], location, self.settings.filter_result_limit, data.get("numberMatched")
         )
         return FilterResult(
@@ -328,6 +331,7 @@ class FilterAgent:
             label=location.name if location else None,
             area_kind=location.kind if location else None,
             conditions=conditions,
+            truncated=truncated,
         )
 
     def _filter_wfs(
@@ -373,7 +377,7 @@ class FilterAgent:
         if result is None:
             return None
         data, number_matched = result
-        features, number_matched = _area_result(
+        features, number_matched, truncated = _area_result(
             data.get("features") or [], location, self.settings.filter_result_limit, number_matched
         )
 
@@ -384,6 +388,7 @@ class FilterAgent:
             label=location.name if location else None,
             area_kind=location.kind if location else None,
             conditions=conditions,
+            truncated=truncated,
         )
 
     @staticmethod

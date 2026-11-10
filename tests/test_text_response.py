@@ -123,6 +123,21 @@ class TestCommandsPresentNarratesFromFacts:
 
         assert "42 Treffer" in result["response_text"]
 
+    def test_truncated_result_never_passes_for_the_total(self):
+        """14.4 rule 1: the shown features of a cut result are not the total."""
+
+        shown = {"type": "FeatureCollection", "features": [{}, {}]}
+        commands = [{"type": "APPLY_FILTER", "payload": {}}]
+
+        known = FilterResult(layer_id="1", features=shown, number_matched=900, truncated=True)
+        prompt = component.run(_aggregated(query="q", filter_result=known), "q", commands=commands)["response_text"]
+        assert "900 Treffer, davon nur 2 auf der Karte angezeigt" in prompt
+
+        unknown = FilterResult(layer_id="1", features=shown, number_matched=None, truncated=True)
+        prompt = component.run(_aggregated(query="q", filter_result=unknown), "q", commands=commands)["response_text"]
+        assert "mehr als 2 Treffer" in prompt and "nenne KEINE Gesamtzahl" in prompt
+        assert "2 Treffer\n" not in prompt and "Gefilterte Ergebnisse: 2 Treffer" not in prompt
+
 
 class TestClearFilterNarration:
     def test_cleared_filter_named_and_filter_action_not_mentioned(self):
