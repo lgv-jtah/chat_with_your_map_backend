@@ -67,9 +67,11 @@ import re
 import uuid
 
 from haystack import component
+from shapely.geometry import shape
 
 from cwym_agent.bridge import AGUIEventBridge
 from cwym_agent.geodata.conversation_context import ConversationContext
+from cwym_agent.geodata.types import FilterResult
 from cwym_agent.map_commands import (
     ActivateLayerCommand,
     AddResultLayerCommand,
@@ -130,6 +132,21 @@ def _min_span(bbox: tuple[float, float, float, float]) -> tuple[float, float, fl
     return (min_x - pad_x, min_y - pad_y, max_x + pad_x, max_y + pad_y)
 
 
+def _features_bbox(features: list[dict]) -> tuple[float, float, float, float] | None:
+    """WGS84 bbox over the features' geometries, or None."""
+
+    bounds = []
+    for feature in features:
+        try:
+            if feature.get("geometry"):
+                bounds.append(shape(feature["geometry"]).bounds)
+        except (ValueError, TypeError, AttributeError):
+            continue
+    if not bounds:
+        return None
+    return (min(b[0] for b in bounds), min(b[1] for b in bounds), max(b[2] for b in bounds), max(b[3] for b in bounds))
+
+
 def _detect_tool_name(query: str) -> str | None:
     # Whole words only: a plain substring check matched "teile" inside
     # "Stadtteile" (-> SHARE) and "druck" inside "Luftdruck" (-> PRINT).
@@ -178,6 +195,9 @@ class CommandBuilderComponent:
         # either would be a guess - change nothing, the answer asks back.
         if aggregated.get("ambiguous_location") is not None:
             return []
+
+        if aggregated.get("dataset_answer") is not None:
+            return self._build_dataset_commands(aggregated, context)
 
         if aggregated.get("filter_result") is not None:
             return self._build_filter_commands(aggregated, context)
@@ -344,6 +364,72 @@ class CommandBuilderComponent:
                 ).model_dump(by_alias=True)
             )
         return commands, to_clear
+
+    def _build_dataset_commands(self, aggregated: dict, context: ConversationContext | None) -> list[dict]:
+        """A tier 1 analysis (architecture 14.4) on the map, with the
+        commands that exist until SHOW_CHART/HIGHLIGHT_FEATURES (CHAT-14):
+
+        - distribution: the attribute's display layer is switched on;
+        - count, top, min/max, lookup: the features it is about as the
+          filter overlay, and the view on them;
+        - average, sum, or no number: the map stays as it is (apart from
+          the area, if one was named).
+        """
+
+        answer = aggregated["dataset_answer"]
+        if answer.status != "ok":
+            return []
+
+        if answer.operation == "distribution":
+            active = set(context.map_state.active_layer_ids) if context else set()
+            commands = []
+            if answer.display_layer and answer.display_layer not in active:
+                commands.append(
+                    ActivateLayerCommand(
+                        command_id=str(uuid.uuid4()),
+                        payload=ActivateLayerPayload(layer_ids=[answer.display_layer]),
+                    ).model_dump(by_alias=True)
+                )
+            return commands + self._zoom_to_area(aggregated)
+
+        if not (answer.features and answer.layer_id):
+            return self._zoom_to_area(aggregated)
+
+        computed = answer.computed
+        total = computed.total if answer.operation == "count" else len(answer.features)
+        overlay = FilterResult(
+            layer_id=answer.layer_id,
+            features={"type": "FeatureCollection", "features": answer.features},
+            number_matched=total,
+            label=answer.area_name or getattr(computed, "lookup_key", None),
+            area_kind=answer.area_kind,
+            conditions=answer.conditions,
+            truncated=answer.features_truncated,
+        )
+        commands = self._build_filter_commands({**aggregated, "filter_result": overlay}, context)
+        if not any(cmd["type"] == "ZOOM_TO_EXTENT" for cmd in commands):
+            bbox = _features_bbox(answer.features)
+            if bbox is not None:
+                commands.append(
+                    ZoomToExtentCommand(
+                        command_id=str(uuid.uuid4()),
+                        payload=ZoomToExtentPayload(bbox=_min_span(bbox)),
+                    ).model_dump(by_alias=True)
+                )
+        return commands
+
+    @staticmethod
+    def _zoom_to_area(aggregated: dict) -> list[dict]:
+        locations = aggregated.get("locations") or []
+        location = next((loc for loc in locations if loc.extent and loc.boundary), None)
+        if location is None:
+            return []
+        return [
+            ZoomToExtentCommand(
+                command_id=str(uuid.uuid4()),
+                payload=ZoomToExtentPayload(bbox=location.extent),
+            ).model_dump(by_alias=True)
+        ]
 
     def _build_filter_commands(
         self, aggregated: dict, context: ConversationContext | None = None

@@ -16,7 +16,7 @@ from typing import Protocol
 
 from haystack import Document
 
-from cwym_agent.geodata.types import ActionMatch, AnalysisResult, FilterResult, LayerMatch, LocationMatch
+from cwym_agent.geodata.types import ActionMatch, AnalysisResult, DatasetAnswer, FilterResult, LayerMatch, LocationMatch
 
 
 class Geocoder(Protocol):
@@ -82,3 +82,9 @@ class DataServices(Protocol):
         mode: str = "replace",
         prior_conditions: list | None = None,
     ) -> FilterResult | None: ...
+
+    def analyze_dataset(
+        self, query: str, operation: str, layer: LayerMatch | None, location: LocationMatch | None = None
+    ) -> DatasetAnswer:
+        """A tier 1 analysis (architecture 14.4): one fixed operation."""
+        ...

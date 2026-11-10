@@ -386,3 +386,21 @@ class TestEnglish:
         assert responses.system_prompt == default
         responses._render({}, [], "de")
         assert responses.system_prompt == default
+
+
+class TestAnalysisExtractionPrompt:
+    """CHAT-11: the tier 1 extraction prompt for a declared dataset."""
+
+    def test_rendered_for_the_fixture_dataset(self, tmp_path):
+        from fixtures.datasets import buildings_profile
+
+        from cwym_agent.geodata.tier1 import Tier1Analyzer, load_datasets
+
+        profile = buildings_profile(tmp_path)
+        llm = _RecordingLlm(generate_reply="{}")
+        agent = FilterAgent(profile.prompt.area_terms, llm=llm, queryables_cache=_Unused(), wfs_client=_Unused())
+        Tier1Analyzer(agent, load_datasets(profile.datasets), profile.name).analyze(
+            "Wie verteilen sich die Energieklassen bei Wohnbau?", "distribution", None
+        )
+
+        assert_snapshot("analysis_extraction", dict(llm.generate_prompts)["analysis_extraction"])

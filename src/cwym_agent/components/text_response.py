@@ -39,7 +39,7 @@ from haystack import component
 from cwym_agent import observability
 from cwym_agent.bridge import AGUIEventBridge
 from cwym_agent.city_profile import CityProfile
-from cwym_agent.geodata import clarification
+from cwym_agent.geodata import analysis_text, clarification
 from cwym_agent.geodata.conversation_context import ConversationContext, render_context_block
 from cwym_agent.geodata.portal_catalog_resolver import LayerCatalog
 from cwym_agent.language import LANGUAGE_NAMES
@@ -103,6 +103,10 @@ class TextResponseComponent:
         verbatim = self._analysis_reply(aggregated.get("analysis_result"), language)
         if verbatim is None:
             verbatim = self._ambiguous_location_reply(aggregated.get("ambiguous_location"), language)
+        if verbatim is None and aggregated.get("dataset_answer") is not None:
+            # Tier 1: the computed numbers reach the user unchanged, in a
+            # fixed template - no LLM rewording (architecture 14.4, rule 4).
+            verbatim = analysis_text.render(aggregated["dataset_answer"], language)
         if verbatim is not None:
             if bridge:
                 message_id = str(uuid.uuid4())
