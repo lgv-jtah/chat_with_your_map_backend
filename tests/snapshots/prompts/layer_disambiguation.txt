@@ -1,0 +1,7 @@
+Du hilfst dabei, aus einer Liste von Kandidaten-Kartenebenen die am besten passende für eine Nutzeranfrage auszuwählen. Der Kontext ist ausschließlich die Freie und Hansestadt Hamburg - bevorzuge Ebenen, die sich auf Hamburg beziehen, gegenüber gleichnamigen Ebenen zu anderen Bundesländern oder Regionen (z.B. Niedersachsen, Schleswig-Holstein). Antworte NUR mit der Nummer der am besten passenden Ebene. Antworte mit 0, wenn keine der Ebenen wirklich passt.
+
+Anfrage: Fahrradstationen
+
+Kandidaten:
+1. Fahrradluftstationen - Luftpumpen für Fahrräder
+2. StadtRAD-Stationen - Bike-Sharing

@@ -1,0 +1,248 @@
+"""Snapshots of every text the Hamburg deployment sends to the LLM.
+
+CHAT-5 moves the city-specific parts of these texts (city name, example
+places and layers, neighbouring regions, place kinds) from the code into
+the city profile. For Hamburg the rendered texts must stay exactly the
+same, otherwise run traces before and after the refactoring are not
+comparable and the planner's behaviour may shift.
+
+Each test renders one text with fixed inputs and compares it with
+``tests/snapshots/prompts/<name>.txt``. After an intended prompt change,
+regenerate the files and review the diff:
+
+    CWYM_UPDATE_SNAPSHOTS=1 uv run pytest tests/test_prompt_snapshots.py
+"""
+
+import json
+import os
+from pathlib import Path
+
+import pytest
+
+from cwym_agent.components.master_agent import MasterAgentComponent
+from cwym_agent.components.text_response import TextResponseComponent
+from cwym_agent.geodata import clarification
+from cwym_agent.geodata.conversation_context import (
+    Area,
+    Condition,
+    ConversationContext,
+    FilterSpec,
+    FilterStateIn,
+    MapStateIn,
+)
+from cwym_agent.geodata.filter_agent import FilterAgent
+from cwym_agent.geodata.portal_catalog_resolver import LayerCatalog
+from cwym_agent.geodata.real_data_services import RealDataServices
+from cwym_agent.geodata.types import ActionMatch, FilterResult, LayerMatch, LocationMatch
+from cwym_agent.llm.qwen3_client import Qwen3Client
+from cwym_agent.settings import Qwen3Settings
+
+SNAPSHOT_DIR = Path(__file__).parent / "snapshots" / "prompts"
+UPDATE = os.environ.get("CWYM_UPDATE_SNAPSHOTS") == "1"
+
+
+def assert_snapshot(name: str, text: str) -> None:
+    path = SNAPSHOT_DIR / f"{name}.txt"
+    if UPDATE:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(text, encoding="utf-8")
+        return
+    if not path.is_file():
+        pytest.fail(f"Snapshot {path} is missing - run with CWYM_UPDATE_SNAPSHOTS=1 to create it")
+    assert text == path.read_text(encoding="utf-8"), (
+        f"Rendered text differs from {path}. If the change is intended, regenerate with "
+        "CWYM_UPDATE_SNAPSHOTS=1 and review the diff."
+    )
+
+
+class _RecordingLlm:
+    """Records every prompt; answers with fixed replies."""
+
+    def __init__(self, generate_reply: str = ""):
+        self.generate_reply = generate_reply
+        self.plan_prompts: list[str] = []
+        self.generate_prompts: list[tuple[str, str]] = []
+
+    def plan(self, prompt: str, streaming_callback=None) -> dict:
+        self.plan_prompts.append(prompt)
+        return {"steps": []}
+
+    def generate(self, prompt: str, streaming_callback=None, max_tokens=None, label="generate") -> str:
+        self.generate_prompts.append((label, prompt))
+        return self.generate_reply
+
+
+class _RecordingCompletions:
+    def __init__(self):
+        self.calls: list[dict] = []
+
+    def create(self, **kwargs):
+        self.calls.append(kwargs)
+        return iter(())
+
+
+def _qwen3_with_recorder() -> tuple[Qwen3Client, _RecordingCompletions]:
+    client = Qwen3Client(Qwen3Settings(base_url="http://test.invalid/v1", api_key="test"))
+    recorder = _RecordingCompletions()
+    client._client.chat.completions = recorder
+    return client, recorder
+
+
+def _dump(value) -> str:
+    return json.dumps(value, ensure_ascii=False, indent=2) + "\n"
+
+
+_CATALOG = LayerCatalog(
+    {
+        "1732": LayerMatch("Schulen", "1732", 1.0),
+        "27764": LayerMatch("StadtRAD-Stationen", "27764", 1.0),
+    }
+)
+
+_FOLLOW_UP_CONTEXT = ConversationContext(
+    map_state=MapStateIn(
+        active_layer_ids=["1732", "27764"],
+        filters=[
+            FilterStateIn(
+                layer_id="27764",
+                filter_spec=FilterSpec(
+                    conditions=[Condition(field="anzahl_raeder", operator="gte", value=10)],
+                    area=Area(name="Wandsbek", kind="bezirk"),
+                ),
+            )
+        ],
+        last_location=Area(name="Eppendorf", kind="stadtteil"),
+    ),
+    history=[
+        ("user", "Zeig mir Fahrradstationen in Wandsbek"),
+        ("assistant", "Ich zeige dir die StadtRAD-Stationen in Wandsbek."),
+    ],
+)
+
+
+class TestQwen3SystemPrompts:
+    def test_plan_request(self):
+        client, recorder = _qwen3_with_recorder()
+        client.plan("Zeig mir Schulen in Wandsbek")
+
+        call = recorder.calls[0]
+        assert_snapshot("plan_request", _dump({"messages": call["messages"], "tools": call["tools"]}))
+
+    def test_generate_request(self):
+        client, recorder = _qwen3_with_recorder()
+        client.generate("PROMPT")
+
+        assert_snapshot("generate_request", _dump({"messages": recorder.calls[0]["messages"]}))
+
+
+class TestPlanningPrompt:
+    def test_follow_up_with_map_state_and_history(self):
+        llm = _RecordingLlm()
+        MasterAgentComponent(llm=llm).run(
+            "Und wie sieht es dort mit Schulen aus?", context=_FOLLOW_UP_CONTEXT, layer_catalog=_CATALOG
+        )
+
+        assert_snapshot("planning_follow_up", llm.plan_prompts[0])
+
+
+class TestResponsePrompts:
+    _LOCATION = LocationMatch("Wandsbek", 53.5794, 10.0911, 0.9, kind="bezirk")
+    _LAYER = LayerMatch("StadtRAD-Stationen", "27764", 0.9)
+
+    def _render(self, aggregated: dict, commands: list) -> str:
+        llm = _RecordingLlm(generate_reply="Antwort")
+        TextResponseComponent(llm=llm).run(
+            aggregated,
+            "Zeig mir Fahrradstationen in Wandsbek",
+            commands=commands,
+            context=_FOLLOW_UP_CONTEXT,
+            layer_catalog=_CATALOG,
+        )
+        return llm.generate_prompts[0][1]
+
+    def test_success(self):
+        filter_result = FilterResult(
+            layer_id="27764",
+            features={"type": "FeatureCollection", "features": []},
+            number_matched=12,
+            label="Wandsbek",
+            area_kind="bezirk",
+        )
+        aggregated = {
+            "locations": [self._LOCATION],
+            "layer": self._LAYER,
+            "action": ActionMatch("Zeigen", 0.85),
+            "filter_result": filter_result,
+        }
+        prompt = self._render(aggregated, [{"type": "APPLY_FILTER", "payload": {"layerId": "27764"}}])
+
+        assert_snapshot("response_success", prompt)
+
+    def test_filter_failed(self):
+        aggregated = {"locations": [self._LOCATION], "layer": self._LAYER, "filter_failed": True}
+        prompt = self._render(aggregated, [{"type": "ACTIVATE_LAYER", "payload": {"layerId": "27764"}}])
+
+        assert_snapshot("response_filter_failed", prompt)
+
+    def test_no_commands(self):
+        assert_snapshot("response_no_commands", self._render({}, []))
+
+
+class _FakeLayerSearch:
+    def search(self, query: str, allowed_layer_ids=None) -> list[LayerMatch]:
+        return [
+            LayerMatch("Fahrradluftstationen", "1", 0.9, "Luftpumpen für Fahrräder"),
+            LayerMatch("StadtRAD-Stationen", "27764", 0.5, "Bike-Sharing"),
+        ]
+
+
+class _Unused:
+    pass
+
+
+class TestLayerResolutionPrompts:
+    def test_query_expansion_and_layer_selection(self):
+        llm = _RecordingLlm(generate_reply="1")
+        services = RealDataServices(
+            address_resolver=_Unused(),
+            layer_search=_FakeLayerSearch(),
+            filter_agent=_Unused(),
+            llm=llm,
+            udp_analysis=_Unused(),
+        )
+        services.resolve_layer("Fahrradstationen")
+
+        prompts = dict(llm.generate_prompts)
+        assert_snapshot("layer_query_expansion", prompts["layer_query_expansion"])
+        assert_snapshot("layer_disambiguation", prompts["layer_disambiguation"])
+
+
+class TestFilterPrompt:
+    def test_condition_extraction(self):
+        llm = _RecordingLlm(generate_reply="[]")
+        agent = FilterAgent(llm=llm, queryables_cache=_Unused(), wfs_client=_Unused())
+        queryables = {
+            "geom": {"x-ogc-role": "primary-geometry"},
+            "name": {"type": "string"},
+            "anzahl_betten": {"type": "integer"},
+            "traeger": {"type": "string"},
+        }
+        agent._extract_conditions(
+            "Krankenhäuser in Wandsbek mit mehr als 100 Betten",
+            queryables,
+            examples={"traeger": ["öffentlich", "freigemeinnützig", "privat"]},
+        )
+
+        assert_snapshot("filter_condition_extraction", llm.generate_prompts[0][1])
+
+
+class TestFixedTexts:
+    def test_clarification_question(self):
+        assert_snapshot("clarification_question", clarification.question(["Altona", "Altona-Altstadt"]))
+
+    def test_analysis_failure_reply(self):
+        assert_snapshot("analysis_failure_reply", TextResponseComponent._analysis_reply(_AnalysisWithoutAnswer()))
+
+
+class _AnalysisWithoutAnswer:
+    answer = None
