@@ -175,6 +175,9 @@ The profile is loaded and validated once at startup and passed into
   `udp_analysis` tool, which is only offered when `analysis_agent` is set.
 - `languages` are the answer languages (German and English are supported;
   the first is the default). Hamburg offers both.
+- `exclusive_layer_groups` lists portal layers of which only one may be
+  visible (e.g. alternative colourings of the same buildings): switching
+  one on switches the others off. Hamburg has none.
 
 A new city needs a profile and, where its services differ from existing
 adapters, an adapter module plus its name in the profile schema.
@@ -229,6 +232,11 @@ no LLM rewords the numbers.
   service fails, the reply says so instead of giving a number. Missing
   values are counted ("keine Angabe") and the reply says what was left
   out.
+
+On the map, a client that declares the commands
+(`forwardedProps.supported_commands`, see `docs/frontend-api.md`) gets the
+matching features as `HIGHLIGHT_FEATURES` and a distribution as
+`SHOW_CHART`; older clients get the filter overlay and the text.
 
 Spatial or multi-step questions (nearest, distances, several layers) go
 to the tier 2 analysis agent where the profile has one (Hamburg: UDP).
