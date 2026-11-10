@@ -56,7 +56,9 @@ def services() -> RealDataServices:
     return RealDataServices(load_profile("hamburg"), llm=llm)
 
 
-def _run_turn(services: RealDataServices, query: str, context: ConversationContext | None = None):
+def _run_turn(
+    services: RealDataServices, query: str, context: ConversationContext | None = None, language: str | None = None
+):
     """Drives one turn directly against RealDataServices/MasterAgentComponent-
     equivalent logic, without the FastAPI/bridge layer - mirrors what
     run_pipeline() does, but also returns execution_log/commands (not
@@ -72,7 +74,7 @@ def _run_turn(services: RealDataServices, query: str, context: ConversationConte
     aggregator = ResultAggregatorComponent()
     command_builder = CommandBuilderComponent()
 
-    plan_json = master_agent.run(query, context=context)["plan_json"]
+    plan_json = master_agent.run(query, context=context, language=language)["plan_json"]
     execution_log = agent_executor.run(plan_json, context=context)["execution_log"]
     aggregated = aggregator.run(execution_log, query)["aggregated"]
     commands = command_builder.run(aggregated, context=context)["commands"]
@@ -211,3 +213,24 @@ class TestMT8ClearFilter:
         assert commands[0]["payload"]["layerId"] == layer_id
         assert commands[1]["payload"]["layerIds"] == [layer_id]
         assert "APPLY_FILTER" not in types
+
+
+class TestEnglishTurn:
+    """CHAT-7: an English question is planned like a German one and gets an
+    English answer."""
+
+    def test_english_question_gets_map_commands_and_an_english_answer(self, services):
+        from cwym_agent.components.result_aggregator import ResultAggregatorComponent
+        from cwym_agent.components.text_response import TextResponseComponent
+        from cwym_agent.language import detect_language
+
+        query = "Show me the hospitals in Wandsbek"
+        execution_log, commands = _run_turn(services, query, language="en")
+        aggregated = ResultAggregatorComponent().run(execution_log, query)["aggregated"]
+        answer = TextResponseComponent(services.profile, llm=services.llm).run(
+            aggregated, query, commands=commands, language="en"
+        )["response_text"]
+
+        assert {"layer_resolver", "location_extractor"} <= _agent_names(execution_log)
+        assert commands, "expected map commands for an English question"
+        assert detect_language(answer) == "en", answer
