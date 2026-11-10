@@ -2,8 +2,8 @@
 
 AG-UI streaming backend for **Chat With Your Map** (CWYM) — a chatbot
 layer on top of Hamburg's Masterportal (Vue 3 geoinformation system) that
-lets users control the map and query geodata using natural German
-language.
+lets users control the map and query geodata in natural German or
+English.
 
 See `../cwym-agent-architecture.md` for the full architecture writeup
 (LLM backend, AG-UI event mapping, design rationale).
@@ -171,6 +171,8 @@ The profile is loaded and validated once at startup and passed into
   section (city genitive, area terms, example places and layer,
   neighbouring regions); `analysis_agent.example_question` goes into the
   `udp_analysis` tool, which is only offered when `analysis_agent` is set.
+- `languages` are the answer languages (German and English are supported;
+  the first is the default). Hamburg offers both.
 
 A new city needs a profile and, where its services differ from existing
 adapters, an adapter module plus its name in the profile schema.
@@ -183,6 +185,24 @@ Endpoint environment variables (`CWYM_*_URL`) keep overriding.
 
 In Docker the profiles are copied to `/app/profiles`; mount a directory
 there to use other profiles.
+
+## Answer language
+
+CWYM answers in the language of the user's message, German or English
+(`cwym_agent.language`). A stop-word heuristic (ported from ASCEND, with
+its flaws fixed) detects the message's language; if the message doesn't
+tell ("ok", "Altona?"), the user's last earlier message decides, then the
+portal's UI language (`forwardedProps.ui_language`), then the profile's
+default. The language and what decided it are in the run trace
+(`request.language`, `request.languageSource`).
+
+The prompts stay German for both languages - the layer catalog, filter
+values and place names are German. They name the query's and the
+answer's language, and an English reply prompt ends with a directive
+that pins the answer language and keeps German names as they are. The
+fixed texts (question back for an ambiguous place, analysis failure)
+exist in both languages; English snapshots are in
+`tests/snapshots/prompts/*_en.txt`.
 
 ## Setup
 

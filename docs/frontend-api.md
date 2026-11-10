@@ -90,7 +90,8 @@ Things to know:
         {"id": "27764", "name": "StadtRAD-Stationen Hamburg", "typ": "WFS", "url": "https://geodienste.hamburg.de/HH_WFS_Stadtrad", "collection": null}
       ],
       "languages": ["de", "en"]
-    }
+    },
+    "ui_language": "de"
   }
 }
 ```
@@ -103,7 +104,22 @@ Things to know:
 | `state` | no | Current map state, see table below. Omit or send `{}` on the first turn. |
 | `tools`, `context` | yes (AG-UI) | Send `[]`. Not used. |
 | `forwardedProps` | yes (AG-UI) | Send at least `{}`. |
+| `forwardedProps.ui_language` | no, recommended | The portal's current UI language (i18next `language`, e.g. `"en"` or `"en-GB"`). Only used when the message itself doesn't tell the answer language (see "Answer language" below). |
 | `forwardedProps.portal_context` | no, but strongly recommended | Which layers this portal offers. Layer search is then limited to them, and `state` layer ids are checked against them. **Without it, layer search runs against all ~6,500 Hamburg layers, and all `state` layer ids/filters are dropped.** Use exactly one of two modes, see below; mixing them, an empty `layers` list, or only one URL fails with 400. |
+
+### Answer language
+
+The backend answers in German or English, if the city profile offers both (Hamburg does).
+It decides per message:
+
+1. The language of the current message ("Show me hospitals" → English).
+2. If the message doesn't tell ("ok", "Altona?"), the language of the user's last earlier message that does.
+3. Then `forwardedProps.ui_language`.
+4. Then the profile's default (Hamburg: German).
+
+Layer names, place names and attribute values stay German in an English answer.
+The fixed texts (the question back for an ambiguous place, the analysis-failure message) exist in both languages.
+`portal_context.languages` (the languages the portal offers) is not used for this.
 
 ### `portal_context` modes
 
@@ -182,7 +198,7 @@ data: {"type":"REASONING_START","messageId":"064d…"}
 | `TOOL_CALL_END` | `toolCallId` | Arguments complete (the step itself may still be running). |
 | `TOOL_CALL_RESULT` | `toolCallId`, `messageId`, `content` | The step's result as a **JSON string**. If the step is `command_builder`, `content` is a MapCommand: `JSON.parse` it and execute it. |
 | `TEXT_MESSAGE_START` | `messageId`, `role: "assistant"` | Chat answer begins. |
-| `TEXT_MESSAGE_CONTENT` | `messageId`, `delta` | Append `delta` to the answer. The first delta is often `"\n\n"`; trim it. The answer is German Markdown. |
+| `TEXT_MESSAGE_CONTENT` | `messageId`, `delta` | Append `delta` to the answer. The first delta is often `"\n\n"`; trim it. The answer is Markdown, in German or English (see "Answer language"). |
 | `TEXT_MESSAGE_END` | `messageId` | Answer complete. |
 | `RUN_FINISHED` | `threadId`, `runId` | Success; the stream ends. |
 | `RUN_ERROR` | `message` | The pipeline failed; the stream ends. HTTP status is still 200. Show an error message. |
