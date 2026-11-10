@@ -13,9 +13,11 @@ mode to this backend keeps the same demo experience.
 """
 
 from cwym_agent.geodata.actions import detect_action
+from cwym_agent.geodata.analysis import Computed
 from cwym_agent.geodata.types import (
     ActionMatch,
     AnalysisResult,
+    DatasetAnswer,
     FilterResult,
     LayerMatch,
     LocationMatch,
@@ -79,6 +81,23 @@ class StubDataServices:
                 return layer
 
         return _DEFAULT_LAYER
+
+    def analyze_dataset(
+        self, query: str, operation: str, layer: LayerMatch | None, location: LocationMatch | None = None
+    ) -> DatasetAnswer:
+        # Counting the demo hospital layer: the canned filter result's one
+        # hospital. Every other operation needs a declared dataset.
+        if operation != "count":
+            return DatasetAnswer(operation=operation, status="needs_dataset", layer_name=layer.name if layer else None)
+        result = self.apply_filter(query, layer, location)
+        if result is None:
+            return DatasetAnswer(operation=operation, status="not_filterable", layer_name=layer.name if layer else None)
+        features = result.features["features"]
+        return DatasetAnswer(
+            operation="count", status="ok", computed=Computed("count", total=len(features)),
+            layer_id=layer.layer_id, layer_name=layer.name, features=features,
+            area_name=location.name if location and location.boundary else None,
+        )
 
     def apply_filter(
         self,

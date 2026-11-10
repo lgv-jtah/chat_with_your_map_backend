@@ -65,4 +65,5 @@ prompt:
 # Tier 2: Hamburg's Urban Data Platform agent (endpoint: CWYM_UDP_AGENT_URL).
 analysis_agent:
   adapter: udp
-  example_question: Wie viele StadtRAD-Stationen gibt es in Altona?
+  # A tier 2 question: counts of one layer are tier 1 (filter_agent).
+  example_question: Welche Schulen liegen weniger als 300 m von einer StadtRAD-Station entfernt?

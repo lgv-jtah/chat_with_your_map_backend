@@ -14,6 +14,7 @@ model for native function calling; ``SUB_AGENT_NAMES`` is what
 from dataclasses import dataclass
 
 from cwym_agent.city_profile import CityProfile
+from cwym_agent.geodata.analysis import OPERATIONS
 
 
 @dataclass(frozen=True)
@@ -122,7 +123,10 @@ def sub_agent_specs(profile: CityProfile) -> list[SubAgentSpec]:
                 "gleichbedeutendes Wort enthält, oder sonst eine konkrete "
                 "Einschränkung nennt statt nur eine Ebene anzuzeigen (z.B. "
                 "'Krankenhäuser mit mehr als 100 Betten', 'Schulen in "
-                f"{places[0]}'). Rufe in diesem Fall IMMER auch layer_resolver "
+                f"{places[0]}'). Auch für einfache AUSWERTUNGEN einer Ebene: Anzahl "
+                "('Wie viele ...?'), Verteilung, Rangliste ('die 5 ältesten ...'), "
+                "kleinster/größter Wert, Durchschnitt, Summe, Suche nach einer Adresse - "
+                "dann 'operation' setzen. Rufe in diesem Fall IMMER auch layer_resolver "
                 "auf (welche Ebene) und, falls ein Ort genannt wird, "
                 "location_extractor (für eine räumliche Einschränkung) - "
                 "filter_agent nutzt deren Ergebnisse."
@@ -133,7 +137,17 @@ def sub_agent_specs(profile: CityProfile) -> list[SubAgentSpec]:
                     "query": {
                         "type": "string",
                         "description": "Die Nutzeranfrage oder der relevante Filteranteil davon.",
-                    }
+                    },
+                    "operation": {
+                        "type": "string",
+                        "enum": list(OPERATIONS),
+                        "description": (
+                            "Nur bei einer Auswertung statt einer Anzeige: count (Wie viele?), "
+                            "distribution (Verteilung), top (die N größten/kleinsten/ältesten/neuesten), "
+                            "min, max, average (Durchschnitt), sum (Summe), lookup (ein Objekt "
+                            "nach Adresse oder Name). Ohne operation wird gefiltert und angezeigt."
+                        ),
+                    },
                 },
                 "required": ["query"],
             },
@@ -144,10 +158,12 @@ def sub_agent_specs(profile: CityProfile) -> list[SubAgentSpec]:
         analysis = SubAgentSpec(
             name="udp_analysis",
             description=(
-                f"Beantwortet ANALYTISCHE Fragen zu {city_genitive} Geodaten mit einer echten "
-                "Datenanalyse der Urban Data Platform: Anzahlen ('Wie viele ...?'), "
-                "Summen, Flächen, Längen, größte/kleinste, nächstgelegene, Dichte, "
-                f"Vergleiche zwischen Gebieten. Beispiel: '{analysis_example}'. "
+                f"Beantwortet RÄUMLICHE oder MEHRSTUFIGE Analysefragen zu {city_genitive} "
+                "Geodaten mit einer echten Datenanalyse der Urban Data Platform: "
+                "nächstgelegene, Entfernungen, Umkreise, Flächen, Längen, Dichte, Vergleiche "
+                "zwischen Gebieten, Verknüpfungen mehrerer Ebenen. NICHT für einfache Anzahlen, "
+                "Verteilungen, Ranglisten, Durchschnitte oder Summen EINER Ebene - dafür "
+                f"filter_agent mit operation. Beispiel: '{analysis_example}'. "
                 "Zeigt das Ergebnis auch auf der Karte. Dauert 1-3 "
                 "Minuten. NICHT verwenden zum bloßen Anzeigen, Filtern oder Navigieren - "
                 "dafür gibt es die anderen Werkzeuge. Wenn du udp_analysis aufrufst, rufe "

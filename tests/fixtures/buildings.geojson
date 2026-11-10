@@ -1,0 +1,497 @@
+{
+ "type": "FeatureCollection",
+ "features": [
+  {
+   "type": "Feature",
+   "id": "B01",
+   "geometry": {
+    "type": "Polygon",
+    "coordinates": [
+     [
+      [
+       10.0,
+       53.6
+      ],
+      [
+       10.001,
+       53.6
+      ],
+      [
+       10.001,
+       53.601
+      ],
+      [
+       10.0,
+       53.601
+      ],
+      [
+       10.0,
+       53.6
+      ]
+     ]
+    ]
+   },
+   "properties": {
+    "gebid": "B01",
+    "adresse": "Lindenweg 1",
+    "eigentuemer": "Wohnbau",
+    "baujahr": "1952",
+    "geschosse": "3",
+    "energieeffizienzklasse": "H"
+   }
+  },
+  {
+   "type": "Feature",
+   "id": "B02",
+   "geometry": {
+    "type": "Polygon",
+    "coordinates": [
+     [
+      [
+       10.002,
+       53.6
+      ],
+      [
+       10.003,
+       53.6
+      ],
+      [
+       10.003,
+       53.601
+      ],
+      [
+       10.002,
+       53.601
+      ],
+      [
+       10.002,
+       53.6
+      ]
+     ]
+    ]
+   },
+   "properties": {
+    "gebid": "B02",
+    "adresse": "Lindenweg 3",
+    "eigentuemer": "Wohnbau",
+    "baujahr": "1952",
+    "geschosse": "3",
+    "energieeffizienzklasse": "H",
+    "pv_leistung": "12,5"
+   }
+  },
+  {
+   "type": "Feature",
+   "id": "B03",
+   "geometry": {
+    "type": "Polygon",
+    "coordinates": [
+     [
+      [
+       10.004,
+       53.6
+      ],
+      [
+       10.004999999999999,
+       53.6
+      ],
+      [
+       10.004999999999999,
+       53.601
+      ],
+      [
+       10.004,
+       53.601
+      ],
+      [
+       10.004,
+       53.6
+      ]
+     ]
+    ]
+   },
+   "properties": {
+    "gebid": "B03",
+    "adresse": "Lindenweg 5",
+    "eigentuemer": "Wohnbau",
+    "baujahr": "1963",
+    "geschosse": "4",
+    "energieeffizienzklasse": "F"
+   }
+  },
+  {
+   "type": "Feature",
+   "id": "B04",
+   "geometry": {
+    "type": "Polygon",
+    "coordinates": [
+     [
+      [
+       10.006,
+       53.6
+      ],
+      [
+       10.007,
+       53.6
+      ],
+      [
+       10.007,
+       53.601
+      ],
+      [
+       10.006,
+       53.601
+      ],
+      [
+       10.006,
+       53.6
+      ]
+     ]
+    ]
+   },
+   "properties": {
+    "gebid": "B04",
+    "adresse": "Lindenweg 17",
+    "eigentuemer": "Stadt",
+    "baujahr": "1963",
+    "geschosse": "1",
+    "pv_leistung": "120"
+   }
+  },
+  {
+   "type": "Feature",
+   "id": "B05",
+   "geometry": {
+    "type": "Polygon",
+    "coordinates": [
+     [
+      [
+       10.0,
+       53.602000000000004
+      ],
+      [
+       10.001,
+       53.602000000000004
+      ],
+      [
+       10.001,
+       53.603
+      ],
+      [
+       10.0,
+       53.603
+      ],
+      [
+       10.0,
+       53.602000000000004
+      ]
+     ]
+    ]
+   },
+   "properties": {
+    "gebid": "B05",
+    "adresse": "Lindenweg 8/10",
+    "eigentuemer": "Wohnbau",
+    "baujahr": "1971",
+    "geschosse": "4",
+    "energieeffizienzklasse": "E",
+    "pv_leistung": "2,2"
+   }
+  },
+  {
+   "type": "Feature",
+   "id": "B06",
+   "geometry": {
+    "type": "Polygon",
+    "coordinates": [
+     [
+      [
+       10.002,
+       53.602000000000004
+      ],
+      [
+       10.003,
+       53.602000000000004
+      ],
+      [
+       10.003,
+       53.603
+      ],
+      [
+       10.002,
+       53.603
+      ],
+      [
+       10.002,
+       53.602000000000004
+      ]
+     ]
+    ]
+   },
+   "properties": {
+    "gebid": "B06",
+    "adresse": "Birkenstraße 2",
+    "eigentuemer": "Kirche",
+    "baujahr": "1940",
+    "geschosse": "2",
+    "energieeffizienzklasse": "H"
+   }
+  },
+  {
+   "type": "Feature",
+   "id": "B07",
+   "geometry": {
+    "type": "Polygon",
+    "coordinates": [
+     [
+      [
+       10.004,
+       53.602000000000004
+      ],
+      [
+       10.004999999999999,
+       53.602000000000004
+      ],
+      [
+       10.004999999999999,
+       53.603
+      ],
+      [
+       10.004,
+       53.603
+      ],
+      [
+       10.004,
+       53.602000000000004
+      ]
+     ]
+    ]
+   },
+   "properties": {
+    "gebid": "B07",
+    "adresse": "Birkenstraße 4",
+    "eigentuemer": "Wohnbau",
+    "baujahr": "1955",
+    "geschosse": "9",
+    "energieeffizienzklasse": "C"
+   }
+  },
+  {
+   "type": "Feature",
+   "id": "B08",
+   "geometry": {
+    "type": "Polygon",
+    "coordinates": [
+     [
+      [
+       10.006,
+       53.602000000000004
+      ],
+      [
+       10.007,
+       53.602000000000004
+      ],
+      [
+       10.007,
+       53.603
+      ],
+      [
+       10.006,
+       53.603
+      ],
+      [
+       10.006,
+       53.602000000000004
+      ]
+     ]
+    ]
+   },
+   "properties": {
+    "gebid": "B08",
+    "adresse": "Birkenstraße 4",
+    "eigentuemer": "Wohnbau",
+    "baujahr": "2015",
+    "geschosse": "9",
+    "energieeffizienzklasse": "A+",
+    "pv_leistung": "94,3"
+   }
+  },
+  {
+   "type": "Feature",
+   "id": "B09",
+   "geometry": {
+    "type": "Polygon",
+    "coordinates": [
+     [
+      [
+       10.0,
+       53.604
+      ],
+      [
+       10.001,
+       53.604
+      ],
+      [
+       10.001,
+       53.605
+      ],
+      [
+       10.0,
+       53.605
+      ],
+      [
+       10.0,
+       53.604
+      ]
+     ]
+    ]
+   },
+   "properties": {
+    "gebid": "B09",
+    "adresse": "Birkenstraße 6",
+    "eigentuemer": "Stadt",
+    "baujahr": "2002",
+    "geschosse": "3",
+    "energieeffizienzklasse": "A"
+   }
+  },
+  {
+   "type": "Feature",
+   "id": "B10",
+   "geometry": {
+    "type": "Polygon",
+    "coordinates": [
+     [
+      [
+       10.002,
+       53.604
+      ],
+      [
+       10.003,
+       53.604
+      ],
+      [
+       10.003,
+       53.605
+      ],
+      [
+       10.002,
+       53.605
+      ],
+      [
+       10.002,
+       53.604
+      ]
+     ]
+    ]
+   },
+   "properties": {
+    "gebid": "B10",
+    "adresse": "Ahornplatz 1",
+    "eigentuemer": "Wohnbau",
+    "baujahr": "1956",
+    "geschosse": "3"
+   }
+  },
+  {
+   "type": "Feature",
+   "id": "B11",
+   "geometry": {
+    "type": "Polygon",
+    "coordinates": [
+     [
+      [
+       10.004,
+       53.604
+      ],
+      [
+       10.004999999999999,
+       53.604
+      ],
+      [
+       10.004999999999999,
+       53.605
+      ],
+      [
+       10.004,
+       53.605
+      ],
+      [
+       10.004,
+       53.604
+      ]
+     ]
+    ]
+   },
+   "properties": {
+    "gebid": "B11",
+    "adresse": "Ahornplatz 3",
+    "eigentuemer": "Genossenschaft",
+    "baujahr": "1957",
+    "geschosse": "3",
+    "energieeffizienzklasse": "G"
+   }
+  },
+  {
+   "type": "Feature",
+   "id": "B12",
+   "geometry": {
+    "type": "Polygon",
+    "coordinates": [
+     [
+      [
+       10.006,
+       53.604
+      ],
+      [
+       10.007,
+       53.604
+      ],
+      [
+       10.007,
+       53.605
+      ],
+      [
+       10.006,
+       53.605
+      ],
+      [
+       10.006,
+       53.604
+      ]
+     ],
+     [
+      [
+       10.0063,
+       53.6043
+      ],
+      [
+       10.0067,
+       53.6043
+      ],
+      [
+       10.0067,
+       53.6047
+      ],
+      [
+       10.0063,
+       53.6047
+      ],
+      [
+       10.0063,
+       53.6043
+      ]
+     ]
+    ]
+   },
+   "properties": {
+    "gebid": "B12",
+    "adresse": "Schleißheimer Straße 450",
+    "eigentuemer": "Stadt",
+    "baujahr": "2024",
+    "geschosse": "4",
+    "energieeffizienzklasse": "B"
+   }
+  }
+ ]
+}

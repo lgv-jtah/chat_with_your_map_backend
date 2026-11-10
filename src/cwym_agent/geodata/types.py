@@ -139,6 +139,10 @@ class FilterResult:
     query (post-merge on a refine turn) - echoed back as
     ApplyFilterPayload.filterSpec.conditions so a later refinement has
     something to merge against."""
+    truncated: bool = False
+    """The service returned only part of what matched (cut at the result
+    limit): ``features`` is not everything, and ``number_matched`` is the
+    real total if known, else None."""
 
 
 @dataclass
@@ -172,3 +176,45 @@ class AnalysisResult:
     error: str | None = None
     """Set when the UDP agent couldn't be reached or failed - answer is
     then None."""
+
+
+@dataclass
+class DatasetAnswer:
+    """A tier 1 analysis (cmym-agent-architecture.md 14.4): what was
+    computed, ready for the fixed reply templates and the map commands.
+    ``status`` other than "ok" means no number was computed - the reply
+    says why instead (rule 1)."""
+
+    operation: str
+    status: str
+    """"ok", or why not: too_many, service_error, needs_dataset,
+    not_filterable, no_layer, no_attribute, not_numeric, not_sortable,
+    no_area, no_lookup_field."""
+    computed: object | None = None
+    """``cwym_agent.geodata.analysis.Computed`` when status is "ok"."""
+    dataset_label: dict[str, str] | None = None
+    """A declared dataset's localized plural ("Gebäude"); None for a plain layer."""
+    layer_id: str | None = None
+    layer_name: str | None = None
+    attribute: str | None = None
+    labels: dict[str, dict[str, str]] = field(default_factory=dict)
+    """Field -> localized label, for the attribute and the conditions."""
+    attribute_type: str | None = None
+    order: list[str] | None = None
+    """The attribute's declared order (ordinal)."""
+    conditions: list[FilterCondition] = field(default_factory=list)
+    area_name: str | None = None
+    area_kind: str | None = None
+    item_field: str | None = None
+    """Property that names a feature in lists (lookup field or id)."""
+    show_fields: list[str] = field(default_factory=list)
+    """Declared attributes to list for a looked-up feature."""
+    features: list[dict] = field(default_factory=list)
+    """Features to show on the map (matches, top-N rows, lookup hits)."""
+    features_truncated: bool = False
+    """More matched than ``features`` shows (display limit)."""
+    display_layer: str | None = None
+    """Layer that colours the dataset by the attribute (distribution)."""
+    cap: int | None = None
+    place: str | None = None
+    """no_area: the place without an outline."""

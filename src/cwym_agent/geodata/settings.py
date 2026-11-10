@@ -126,6 +126,11 @@ class GeodataSettings:
     filter_result_limit: int = field(
         default_factory=lambda: _env_int("CWYM_FILTER_RESULT_LIMIT", 500)
     )
+    # Tier 1 analysis (architecture 14.4): aggregates are computed over
+    # all matching features, fetched in pages; above the cap the answer
+    # says the data is too large instead of computing on part of it.
+    analysis_page_size: int = field(default_factory=lambda: _env_int("CWYM_ANALYSIS_PAGE_SIZE", 1000))
+    analysis_max_features: int = field(default_factory=lambda: _env_int("CWYM_ANALYSIS_MAX_FEATURES", 10000))
     # Same rationale as layer_llm_max_tokens - condition extraction is a
     # small-output task but Qwen3's reasoning trace precedes it.
     filter_llm_max_tokens: int = field(

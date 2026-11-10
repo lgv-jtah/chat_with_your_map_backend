@@ -215,7 +215,7 @@ already arrived.
 | `location_extractor` | Resolve place names (address search) | Suche Gebiet... |
 | `layer_resolver` | Find the matching map layer | Suche passende Kartenebene... |
 | `action_detector` | Classify the intended action | Bestimme gewünschte Aktion... |
-| `filter_agent` | Query matching features (OGC API Features) | Filtere Daten... |
+| `filter_agent` | Query matching features (OGC API Features/WFS), or a built-in analysis (count, distribution, top-N, ...) of them | Filtere Daten... |
 | `udp_analysis` | Urban Data Platform analysis. **The result arrives 1–3 min after `TOOL_CALL_END`.** | Analysiere Daten der Urban Data Platform (dauert 1–3 Minuten)... |
 | `command_builder` | **A MapCommand.** Execute `TOOL_CALL_RESULT.content`. | (no status) |
 

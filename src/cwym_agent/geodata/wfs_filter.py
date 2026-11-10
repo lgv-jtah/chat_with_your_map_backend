@@ -221,11 +221,14 @@ def build_filter(clauses: list[str]) -> str:
 
 
 def build_get_feature(
-    feature_type: str, namespace: str, filter_xml: str, count: int, hits: bool = False
+    feature_type: str, namespace: str, filter_xml: str, count: int, hits: bool = False, start_index: int = 0
 ) -> str:
-    """A WFS 2.0 GetFeature request body (POST)."""
+    """A WFS 2.0 GetFeature request body (POST). ``start_index`` pages
+    (WFS 2.0 response paging)."""
 
     output = 'resultType="hits"' if hits else f'count="{int(count)}" outputFormat="application/geo+json"'
+    if start_index and not hits:
+        output += f' startIndex="{int(start_index)}"'
     return (
         f'<wfs:GetFeature service="WFS" version="2.0.0" {output} '
         'xmlns:wfs="http://www.opengis.net/wfs/2.0" xmlns:fes="http://www.opengis.net/fes/2.0" '
@@ -289,6 +292,18 @@ class WfsClient:
         if number_matched is None and len(data.get("features") or []) >= limit:
             number_matched = self._count(url, feature_type, namespace, filter_xml)
         return data, number_matched
+
+    def get_page(
+        self, url: str, feature_type: str, namespace: str, filter_xml: str, count: int, start_index: int
+    ) -> dict | None:
+        """One page of matching features (GeoJSON), or None on failure."""
+
+        return self._post(url, build_get_feature(feature_type, namespace, filter_xml, count, start_index=start_index))
+
+    def count(self, url: str, feature_type: str, namespace: str, filter_xml: str) -> int | None:
+        """The server's total for the filter (``resultType=hits``), or None."""
+
+        return self._count(url, feature_type, namespace, filter_xml)
 
     def _count(self, url: str, feature_type: str, namespace: str, filter_xml: str) -> int | None:
         try:

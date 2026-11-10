@@ -1887,6 +1887,19 @@ This covers every ASCEND analysis tool: `get_building_info` → lookup, `query_b
 4. **Numbers reach the reply unchanged.** Tier 1 results go into the reply fixed (template or verbatim insertion); the reply LLM must not turn "105 von 235" into "rund 100". Same principle as passing UDP answers through verbatim (13.2).
 5. **Tour figures come from tier 1.** Tour texts use placeholders such as `{count(energieeffizienzklasse=H)}`, filled when the tour starts, instead of ASCEND's hard-coded figures.
 
+**Implemented (CHAT-11).**
+
+- The planner sets `operation` on `filter_agent` (count, distribution, top, min, max, average, sum, lookup); `udp_analysis` no longer claims simple counts. As decided above, Hamburg's counts moved from UDP to tier 1.
+- `geodata/tier1.py` picks the data: a layer that shows a declared dataset (`datasets` in the profile, linked by `layers` and the display layers), or without a layer the only dataset - every operation; any other filterable WFS/OAF layer - `count` only, with the existing condition prompt; otherwise an honest status.
+  For a dataset, a separate extraction prompt (declared fields with type, label, order and known values) returns conditions, attribute, N, direction and the lookup key. The existing filter prompt is unchanged.
+- `geodata/analysis_data.py` gets complete data or reports "too_many" / "service_error" (rule 1): counts without an area from the server's total, everything else by paging (OAF `next` links or `offset`, WFS `startIndex`) up to `CWYM_ANALYSIS_MAX_FEATURES` (10,000); an area as its rectangle on the server and the outline locally. Conditions go to the server only when it compares them as declared; ranges on ordinals and on numbers stored as text are evaluated locally.
+  A plain layer's count without an area that is too large to page still gets the server's exact total; with an area it says "too many".
+- `geodata/analysis.py` computes on typed values (rule 2: "94,3", "1.234,5", ordinal order) and reports missing and unreadable values (rule 3); lookups are house-number aware and return every feature at an address.
+- `geodata/analysis_text.py` renders fixed de/en templates; the reply LLM is not involved (rule 4). Tests compare the reply's numbers with the computed ones.
+- On the map, until `SHOW_CHART`/`HIGHLIGHT_FEATURES` (CHAT-14): a distribution switches on the attribute's display layer; count, top, min/max and lookup show their features as the filter overlay and zoom to them.
+- A place without an outline (a street) is refused rather than counted city-wide; the city itself means the whole dataset.
+- The existing filter path no longer reports a result cut at `CWYM_FILTER_RESULT_LIMIT` as the total (`FilterResult.truncated`).
+
 #### Tier 2: optional analysis agent per city
 
 - For everything spatial or multi-step: nearest, distance, buffer, density, clusters, joins, cross tables, several datasets.
@@ -1937,7 +1950,7 @@ New MapCommands, in `map_commands.py` and `docs/frontend-api.md`:
 
 **Phase 2: ASCEND features.**
 
-9. Tier 1 in `FilterAgent`: `file` source, typed dataset declarations, the fixed operations, full-data aggregation (no truncation), numbers inserted unchanged into the reply; ASCEND buildings as a Munich dataset with the refresh script.
+9. Tier 1 in `FilterAgent`: `file` source, typed dataset declarations, the fixed operations, full-data aggregation (no truncation), numbers inserted unchanged into the reply; ASCEND buildings as a Munich dataset with the refresh script. Engine done (CHAT-11, 14.4); the ASCEND dataset is CHAT-12.
 10. Tier 2: `udp_analysis` → generic `analysis_agent` behind `AnalysisAgent`, UDP as the Hamburg adapter, offered only where the profile configures it; "not available here" reply and planning rule for cities without tier 2.
 11. `SHOW_CHART`, `SHOW_SUGGESTIONS`, `START_TOUR`, `HIGHLIGHT_FEATURES` in backend, contract and addon.
 12. Exclusive layer groups.

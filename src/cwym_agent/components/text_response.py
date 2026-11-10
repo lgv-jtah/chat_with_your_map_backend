@@ -39,7 +39,7 @@ from haystack import component
 from cwym_agent import observability
 from cwym_agent.bridge import AGUIEventBridge
 from cwym_agent.city_profile import CityProfile
-from cwym_agent.geodata import clarification
+from cwym_agent.geodata import analysis_text, clarification
 from cwym_agent.geodata.conversation_context import ConversationContext, render_context_block
 from cwym_agent.geodata.portal_catalog_resolver import LayerCatalog
 from cwym_agent.language import LANGUAGE_NAMES
@@ -103,6 +103,10 @@ class TextResponseComponent:
         verbatim = self._analysis_reply(aggregated.get("analysis_result"), language)
         if verbatim is None:
             verbatim = self._ambiguous_location_reply(aggregated.get("ambiguous_location"), language)
+        if verbatim is None and aggregated.get("dataset_answer") is not None:
+            # Tier 1: the computed numbers reach the user unchanged, in a
+            # fixed template - no LLM rewording (architecture 14.4, rule 4).
+            verbatim = analysis_text.render(aggregated["dataset_answer"], language)
         if verbatim is not None:
             if bridge:
                 message_id = str(uuid.uuid4())
@@ -226,11 +230,21 @@ class TextResponseComponent:
         if filter_result:
             # number_matched (OGC API Features' numberMatched) is optional
             # per spec - fall back to the returned feature count when the
-            # server didn't report it, rather than printing "None Treffer".
-            count = filter_result.number_matched
-            if count is None:
-                count = len(filter_result.features.get("features", []))
-            facts.append(f"Gefilterte Ergebnisse: {count} Treffer")
+            # result is complete, rather than printing "None Treffer". A
+            # result cut at the limit must not pass for the total
+            # (cmym-agent-architecture.md 14.4, rule 1).
+            shown = len(filter_result.features.get("features", []))
+            total = filter_result.number_matched
+            truncated = filter_result.truncated or (total is not None and total > shown)
+            if not truncated:
+                facts.append(f"Gefilterte Ergebnisse: {total if total is not None else shown} Treffer")
+            elif total is not None:
+                facts.append(f"Gefilterte Ergebnisse: {total} Treffer, davon nur {shown} auf der Karte angezeigt")
+            else:
+                facts.append(
+                    f"Gefilterte Ergebnisse: mehr als {shown} Treffer, die Gesamtzahl ist unbekannt; "
+                    f"nur {shown} auf der Karte angezeigt - nenne KEINE Gesamtzahl"
+                )
 
         for layer_id in cleared:
             name = layer_catalog.name(layer_id) if layer_catalog is not None else layer_id

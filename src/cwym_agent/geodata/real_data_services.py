@@ -45,10 +45,12 @@ from cwym_agent.geodata.settings import GeodataSettings
 from cwym_agent.geodata.types import (
     ActionMatch,
     AnalysisResult,
+    DatasetAnswer,
     FilterResult,
     LayerMatch,
     LocationMatch,
 )
+from cwym_agent.geodata.tier1 import Tier1Analyzer, load_datasets
 from cwym_agent.geodata.udp_analysis import UdpAnalysisClient
 from cwym_agent.llm.qwen3_client import Qwen3Client
 
@@ -136,6 +138,8 @@ class RealDataServices:
         )
         self.llm = llm if llm is not None else Qwen3Client()
         self.filter_agent = filter_agent or FilterAgent(profile.prompt.area_terms, self.settings, llm=self.llm)
+        # File datasets load here, so a broken file stops startup.
+        self.tier1 = Tier1Analyzer(self.filter_agent, load_datasets(profile.datasets), profile.name)
         self.udp_analysis = udp_analysis or UdpAnalysisClient(profile.extent, self.settings)
 
         # The city itself. A city's address search typically indexes only
@@ -295,6 +299,11 @@ class RealDataServices:
         mode="refine"."""
 
         return self.filter_agent.filter(query, layer, location, mode=mode, prior_conditions=prior_conditions)
+
+    def analyze_dataset(
+        self, query: str, operation: str, layer: LayerMatch | None, location: LocationMatch | None = None
+    ) -> DatasetAnswer:
+        return self.tier1.analyze(query, operation, layer, location)
 
     def detect_action(self, query: str) -> ActionMatch:
         return detect_action(query)

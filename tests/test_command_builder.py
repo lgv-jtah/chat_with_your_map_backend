@@ -281,6 +281,14 @@ class TestBuildFilterCommands:
         assert commands[0]["payload"]["totalMatched"] is None
         assert commands[0]["payload"]["truncated"] is False
 
+    def test_truncated_flag_with_unknown_total(self):
+        filter_result = FilterResult(layer_id="27714", features=_FEATURES, number_matched=None, truncated=True)
+
+        [command, *_] = builder._build_commands(_aggregated("Filter", layer=_LAYER, filter_result=filter_result))
+
+        assert command["payload"]["truncated"] is True
+        assert command["payload"]["totalMatched"] is None
+
     def test_filter_result_produces_apply_filter_even_without_action_detector(self):
         """Qwen3's plan can call filter_agent without also calling
         action_detector (confirmed live: a plan for "Filtere

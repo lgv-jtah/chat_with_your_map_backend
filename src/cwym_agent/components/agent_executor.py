@@ -15,6 +15,7 @@ from haystack import component
 
 from cwym_agent import observability
 from cwym_agent.bridge import AGUIEventBridge
+from cwym_agent.geodata.analysis import OPERATIONS
 from cwym_agent.geodata.conversation_context import ConversationContext
 from cwym_agent.geodata.portal_catalog_resolver import LayerCatalog
 from cwym_agent.geodata.interfaces import DataServices
@@ -44,6 +45,17 @@ def _tool_call_result_view(agent_name: str, serialized_result):
     TextResponseComponent/CommandBuilderComponent still need it.
     """
 
+    if agent_name == "filter_agent" and isinstance(serialized_result, dict) and "computed" in serialized_result:
+        # A tier 1 analysis: numbers and counts, not the features again.
+        computed = serialized_result.get("computed") or {}
+        return {
+            **{key: value for key, value in serialized_result.items() if key not in ("features", "computed")},
+            "feature_count": len(serialized_result.get("features") or []),
+            "computed": {
+                **{key: value for key, value in computed.items() if key != "rows"},
+                "row_count": len(computed.get("rows") or []),
+            } if computed else None,
+        }
     if agent_name == "filter_agent" and isinstance(serialized_result, dict) and "features" in serialized_result:
         features = serialized_result["features"] or {}
         return {
@@ -303,6 +315,10 @@ class AgentExecutorComponent:
             # would be a guess - the answer asks back instead.
             logger.info("agent_executor: location %r is ambiguous, not filtering", location.name)
             return None
+
+        operation = args.get("operation")
+        if operation in OPERATIONS:
+            return self.data_services.analyze_dataset(query, operation, layer, location)
 
         mode = args.get("mode", "replace")
         prior_conditions = None

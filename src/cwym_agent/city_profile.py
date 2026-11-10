@@ -25,7 +25,16 @@ from pathlib import Path
 from typing import Annotated, Literal
 
 import yaml
-from pydantic import AfterValidator, BaseModel, ConfigDict, Field, ValidationError, field_validator, model_validator
+from pydantic import (
+    AfterValidator,
+    BaseModel,
+    ConfigDict,
+    Field,
+    ValidationError,
+    ValidationInfo,
+    field_validator,
+    model_validator,
+)
 
 from cwym_agent.language import SUPPORTED_LANGUAGES
 
@@ -114,6 +123,111 @@ class AnalysisAgentConfig(_Strict):
     in the tool description."""
 
 
+# --- tier 1 datasets (cmym-agent-architecture.md 14.4) ----------------------
+
+Identifier = Annotated[str, Field(pattern=r"^[a-z][a-z0-9_]*$", max_length=40)]
+HexColor = Annotated[str, Field(pattern=r"^#[0-9a-fA-F]{6}$")]
+LocalizedText = dict[str, Annotated[str, Field(min_length=1)]]
+"""Language code -> text; must cover every profile language."""
+
+
+class FileSourceConfig(_Strict):
+    """A GeoJSON FeatureCollection (WGS84) loaded at startup."""
+
+    type: Literal["file"]
+    path: Path
+    """Relative to the profile's directory."""
+
+    @field_validator("path")
+    @classmethod
+    def _resolve(cls, v: Path, info: ValidationInfo) -> Path:
+        base_dir = (info.context or {}).get("base_dir")
+        if base_dir is None:
+            return v
+        resolved = (Path(base_dir) / v).resolve()
+        if not resolved.is_file():
+            raise ValueError(f"dataset file not found: {resolved}")
+        return resolved
+
+
+class WfsSourceConfig(_Strict):
+    type: Literal["wfs"]
+    url: HttpUrlStr
+    feature_type: str = Field(min_length=1)
+    """Without namespace prefix, e.g. "staatliche_schulen"."""
+
+
+class OafSourceConfig(_Strict):
+    type: Literal["oaf"]
+    url: HttpUrlStr
+    """The API's landing page (``.../collections`` is appended)."""
+    collection: str = Field(min_length=1)
+
+
+DatasetSourceConfig = Annotated[
+    FileSourceConfig | WfsSourceConfig | OafSourceConfig, Field(discriminator="type")
+]
+
+
+class AttributeConfig(_Strict):
+    """One attribute tier 1 may compute on, with its type (14.4 rule 2:
+    values are converted by type before sorting or computing)."""
+
+    label: LocalizedText
+    type: Literal["number", "category", "ordinal"]
+    order: list[str] | None = None
+    """ordinal only: all values, lowest/best first (e.g. A+, A, B, ..., H)."""
+    bin_width: float | None = Field(default=None, gt=0)
+    """number only: distribution in bins of this width (10 = decades)."""
+    top: int | None = Field(default=None, ge=1)
+    """category only: distribution shows the ``top`` most frequent values
+    plus "Sonstige"."""
+    colors: dict[str, HexColor] = Field(default_factory=dict)
+    """Value -> chart colour."""
+    display_layer: str | None = None
+    """Portal layer that colours the dataset by this attribute; switched on
+    for a distribution of it."""
+
+    @model_validator(mode="after")
+    def _type_options(self) -> AttributeConfig:
+        if self.type == "ordinal":
+            if not self.order:
+                raise ValueError("an ordinal attribute needs 'order' (all values, lowest/best first)")
+            if len(set(self.order)) != len(self.order):
+                raise ValueError("'order' values must be unique")
+            unknown = sorted(set(self.colors) - set(self.order))
+            if unknown:
+                raise ValueError(f"colors for values not in 'order': {unknown}")
+        elif self.order is not None:
+            raise ValueError("'order' is only for ordinal attributes")
+        if self.bin_width is not None and self.type != "number":
+            raise ValueError("'bin_width' is only for number attributes")
+        if self.top is not None and self.type != "category":
+            raise ValueError("'top' is only for category attributes")
+        if self.colors and self.type == "number" and self.bin_width is None:
+            raise ValueError("'colors' on a number attribute need 'bin_width' (they colour bins)")
+        return self
+
+
+class DatasetConfig(_Strict):
+    """A tier 1 dataset: one source, typed attributes."""
+
+    label: LocalizedText
+    """Plural noun for replies, e.g. {de: Gebäude, en: buildings}."""
+    source: DatasetSourceConfig
+    id_field: str = Field(min_length=1)
+    lookup_field: str | None = None
+    """Property for lookups by name or address (e.g. "adresse")."""
+    layers: list[str] = Field(default_factory=list)
+    """Portal layer ids that show this dataset - how a resolved layer finds
+    its dataset (the attributes' display layers count too)."""
+    attributes: dict[str, AttributeConfig] = Field(min_length=1)
+
+    @property
+    def layer_ids(self) -> set[str]:
+        return set(self.layers) | {a.display_layer for a in self.attributes.values() if a.display_layer}
+
+
 class LayerExample(_Strict):
     """A colloquial term whose official layer has a different name - the
     example that teaches the planner and the layer search's query
@@ -162,6 +276,9 @@ class CityProfile(_Strict):
     prompt: PromptConfig
     analysis_agent: AnalysisAgentConfig | None = None
     """None: the city has no tier 2 analysis agent."""
+    datasets: dict[Identifier, DatasetConfig] = Field(default_factory=dict)
+    """Tier 1 datasets with typed attributes (14.4). Counting works on any
+    filterable layer without one; the other operations need it."""
 
     @field_validator("languages")
     @classmethod
@@ -205,7 +322,26 @@ class CityProfile(_Strict):
                 f"boundaries.collections has kinds {unknown} that no geocoder.place_types entry produces "
                 f"(known kinds: {sorted(kinds)})"
             )
+        for key, dataset in self.datasets.items():
+            texts = {f"datasets.{key}.label": dataset.label} | {
+                f"datasets.{key}.attributes.{name}.label": attribute.label
+                for name, attribute in dataset.attributes.items()
+            }
+            for where, text in texts.items():
+                missing = [code for code in self.languages if code not in text]
+                if missing:
+                    raise ValueError(f"{where} has no text for {missing} (profile languages: {self.languages})")
+        layer_owner: dict[str, str] = {}
+        for key, dataset in self.datasets.items():
+            for layer_id in dataset.layer_ids:
+                if layer_owner.setdefault(layer_id, key) != key:
+                    raise ValueError(f"layer {layer_id!r} belongs to datasets {layer_owner[layer_id]!r} and {key!r}")
         return self
+
+    def dataset_for_layer(self, layer_id: str) -> tuple[str, DatasetConfig] | None:
+        """The declared dataset a portal layer shows, if any."""
+
+        return next(((key, d) for key, d in self.datasets.items() if layer_id in d.layer_ids), None)
 
     @property
     def default_language(self) -> str:
@@ -284,7 +420,7 @@ def load_profile(selector: str | None = None) -> CityProfile:
         raise CityProfileError(f"City profile {path} must be a YAML mapping, got {type(data).__name__}")
 
     try:
-        profile = CityProfile.model_validate(data)
+        profile = CityProfile.model_validate(data, context={"base_dir": path.parent})
     except ValidationError as e:
         raise CityProfileError(f"Invalid city profile {path}:\n{_format_errors(e)}") from None
 

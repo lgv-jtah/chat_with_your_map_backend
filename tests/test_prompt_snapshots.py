@@ -98,6 +98,14 @@ def _dump(value) -> str:
     return json.dumps(value, ensure_ascii=False, indent=2) + "\n"
 
 
+_TWELVE_STATIONS = {
+    "type": "FeatureCollection",
+    "features": [
+        {"type": "Feature", "geometry": {"type": "Point", "coordinates": [10.08, 53.57 + i / 1000]}, "properties": {}}
+        for i in range(12)
+    ],
+}
+
 _CATALOG = LayerCatalog(
     {
         "1732": LayerMatch("Schulen", "1732", 1.0),
@@ -171,7 +179,7 @@ class TestResponsePrompts:
     def test_success(self):
         filter_result = FilterResult(
             layer_id="27764",
-            features={"type": "FeatureCollection", "features": []},
+            features=_TWELVE_STATIONS,
             number_matched=12,
             label="Wandsbek",
             area_kind="bezirk",
@@ -351,7 +359,7 @@ class TestEnglish:
         location = TestResponsePrompts._LOCATION
         layer = TestResponsePrompts._LAYER
         filter_result = FilterResult(
-            layer_id="27764", features={"type": "FeatureCollection", "features": []}, number_matched=12,
+            layer_id="27764", features=_TWELVE_STATIONS, number_matched=12,
             label="Wandsbek", area_kind="bezirk",
         )
         success = {"locations": [location], "layer": layer, "action": ActionMatch("Zeigen", 0.85), "filter_result": filter_result}
@@ -378,3 +386,21 @@ class TestEnglish:
         assert responses.system_prompt == default
         responses._render({}, [], "de")
         assert responses.system_prompt == default
+
+
+class TestAnalysisExtractionPrompt:
+    """CHAT-11: the tier 1 extraction prompt for a declared dataset."""
+
+    def test_rendered_for_the_fixture_dataset(self, tmp_path):
+        from fixtures.datasets import buildings_profile
+
+        from cwym_agent.geodata.tier1 import Tier1Analyzer, load_datasets
+
+        profile = buildings_profile(tmp_path)
+        llm = _RecordingLlm(generate_reply="{}")
+        agent = FilterAgent(profile.prompt.area_terms, llm=llm, queryables_cache=_Unused(), wfs_client=_Unused())
+        Tier1Analyzer(agent, load_datasets(profile.datasets), profile.name).analyze(
+            "Wie verteilen sich die Energieklassen bei Wohnbau?", "distribution", None
+        )
+
+        assert_snapshot("analysis_extraction", dict(llm.generate_prompts)["analysis_extraction"])

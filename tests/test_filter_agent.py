@@ -209,6 +209,27 @@ class TestFilterAgentFilter:
         assert result is not None
         assert result.number_matched is None
         assert len(result.features["features"]) == 1
+        assert not result.truncated
+
+    def test_full_page_without_total_is_truncated(self):
+        """14.4 rule 1: a page cut at the result limit is not the total."""
+
+        page = [{"type": "Feature", "properties": {}} for _ in range(3)]
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            if "queryables" in str(request.url):
+                return httpx.Response(200, json=_QUERYABLES)
+            return httpx.Response(200, json={"type": "FeatureCollection", "features": page})
+
+        client = httpx.Client(transport=httpx.MockTransport(handler))
+        reply = json.dumps([{"field": "betten", "operator": "gt", "value": 1}])
+        agent = FilterAgent(
+            _AREA_TERMS, GeodataSettings(filter_result_limit=3), llm=_mock_llm(reply), http_client=client
+        )
+
+        result = agent.filter("query", _OAF_LAYER)
+
+        assert result.truncated and result.number_matched is None
 
     def test_spatial_predicate_added_when_location_has_boundary(self):
         captured = {}

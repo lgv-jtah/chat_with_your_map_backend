@@ -336,3 +336,4 @@ class TestExactAreaCheck:
 
         assert len(result.features["features"]) == 1
         assert result.number_matched is None
+        assert result.truncated

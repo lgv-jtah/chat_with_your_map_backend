@@ -1,0 +1,11 @@
+Du hilfst dabei, eine Auswertungsfrage zu einem Datensatz in strukturierte Angaben zu übersetzen. Gewünschte Auswertung: Verteilung der Werte eines Feldes. Felder des Datensatzes:
+- baujahr (Zahl) - Baujahr
+- eigentuemer (Kategorie) - Eigentümer - Werte: Genossenschaft, Kirche, Stadt, Wohnbau
+- energieeffizienzklasse (Rangfolge) - Energieeffizienzklasse - Reihenfolge: A+, A, B, C, D, E, F, G, H
+- geschosse (Zahl) - Geschosse
+- pv_leistung (Zahl) - PV-Leistung (kWp)
+- adresse (Text) - Adresse/Name
+
+Anfrage: "Wie verteilen sich die Energieklassen bei Wohnbau?"
+
+Antworte NUR mit einem JSON-Objekt der Form {"conditions": [<Bedingungen der Form {"field": <Feldname>, "operator": <eq|ne|lt|lte|gt|gte|contains>, "value": <Wert>}>], "attribute": <Feldname, der ausgewertet wird, oder null>, "n": <gewünschte Anzahl bei einer Rangliste, oder null>, "order": <"desc" für die höchsten/größten/neuesten Werte bzw. das Ende der Reihenfolge, "asc" für die niedrigsten/kleinsten/ältesten Werte bzw. den Anfang der Reihenfolge, oder null>, "lookup": <gesuchte Adresse oder gesuchter Name, oder null>}. Verwende NUR Felder aus der obigen Liste. Sind Werte angegeben, verwende den passenden Wert genau so geschrieben. Bei Feldern mit Reihenfolge vergleichen lt/gt nach dieser Reihenfolge. Eine Bedingung auf das ausgewertete Feld nur dann, wenn die Anfrage es ausdrücklich einschränkt. Ein Ortsname (Stadtteil, Bezirk) ist KEINE Bedingung - die räumliche Einschränkung erfolgt separat.
