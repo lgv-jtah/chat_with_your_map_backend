@@ -53,6 +53,23 @@ def test_show_reads_docker_compose_log_output(tmp_path):
     assert json.loads(out.getvalue())["runId"] == "run-1"
 
 
+def test_show_finds_the_ids_the_addon_copies(tmp_path):
+    """CHAT-23: "Kopieren" copied threadId/runId, which matched neither id.
+    The runId (what the addon copies now) and that older form both work."""
+
+    current = tmp_path / "traces.jsonl"
+    thread_id, run_id = "864d388b-4b83-4941-9ea3-d584e4d20e0c", "ce09fd26-c69e-4614-9763-5b88b1e3dacb"
+    _write(current, [_record(thread_id, run_id, "Schulen", "2026-11-11T10:00:00"),
+                     _record(thread_id, "aa11bb22-0000-4000-8000-000000000000", "Kitas", "2026-11-11T10:01:00")])
+
+    for copied in (run_id, f"{thread_id}/{run_id}", f" {thread_id}/{run_id}\n", run_id[:8]):
+        out = io.StringIO()
+        assert main(["--file", str(current), "show", copied, "--json"], out=out) == 0, copied
+        assert [json.loads(line)["runId"] for line in out.getvalue().splitlines()] == [run_id]
+
+    assert main(["--file", str(current), "show", f"other-thread/{run_id}"], out=io.StringIO()) == 1
+
+
 def test_show_unknown_id_fails(tmp_path):
     current = tmp_path / "traces.jsonl"
     _write(current, [_record("thread-abc", "run-1", "Schulen", "2026-10-23T10:00:00")])
