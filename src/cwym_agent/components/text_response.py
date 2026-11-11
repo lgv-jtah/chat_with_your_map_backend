@@ -87,8 +87,12 @@ def _log_answer(text: str, verbatim: bool) -> None:
 
 @component
 class TextResponseComponent:
-    def __init__(self, profile: CityProfile, llm: Any | None = None):
+    def __init__(self, profile: CityProfile, llm: Any | None = None, reasoning: bool = False):
+        """:param reasoning: whether the reply LLM reasons before answering
+        (``CWYM_QWEN3_REPLY_REASONING``)."""
+
         self.llm = llm if llm is not None else Qwen3Client()
+        self.reasoning = reasoning
         self.default_language = profile.default_language
         self.example_places = profile.prompt.example_places
 
@@ -148,7 +152,10 @@ class TextResponseComponent:
             def on_token(chunk):
                 send(splitter.feed(chunk.content) if splitter else chunk.content)
 
-            self.llm.generate(prompt, streaming_callback=on_token, label="text_response", system_prompt=system_prompt)
+            self.llm.generate(
+                prompt, streaming_callback=on_token, label="text_response", system_prompt=system_prompt,
+                reasoning=self.reasoning,
+            )
             items: list[str] = []
             if splitter:
                 rest, items = splitter.finish()
@@ -162,7 +169,9 @@ class TextResponseComponent:
                     ).model_dump(by_alias=True)
                 )
         else:
-            response_text = self.llm.generate(prompt, label="text_response", system_prompt=system_prompt)
+            response_text = self.llm.generate(
+                prompt, label="text_response", system_prompt=system_prompt, reasoning=self.reasoning
+            )
             if splitter:
                 response_text, _ = split_suggestions(response_text)
 

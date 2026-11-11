@@ -84,10 +84,21 @@ class SuggestionSplitter:
         return text
 
 
+# CWYM knows no user position and no routes; the instruction says so, but
+# found live, "Navigiere zur nächsten Station" still slipped through.
+_IMPOSSIBLE = re.compile(
+    r"\b(?:nächste[nrms]?|naechste[nrms]?|in meiner nähe|mein(?:em|en)? standort|route|routen|wegbeschreibung"
+    r"|nearest|near me|my location|directions|route to)\b",
+    re.IGNORECASE,
+)
+
+
 def parse_items(block: str) -> list[str]:
     items = []
     for line in block.splitlines():
         text = _ITEM_PREFIX.sub("", line).strip().strip("\"'„“”").strip()
+        if _IMPOSSIBLE.search(text):
+            continue
         if text and len(text) <= MAX_LENGTH and text not in items:
             items.append(text)
         if len(items) == MAX_SUGGESTIONS:

@@ -80,3 +80,13 @@ class Qwen3Settings:
     max_tokens_generate: int = field(
         default_factory=lambda: _env_int("CWYM_QWEN3_MAX_TOKENS_GENERATE", 2048)
     )
+    # The final reply is plain wording of facts the pipeline already
+    # decided; Qwen3's reasoning before it cost ~4 s per answer, and with
+    # the follow-up suggestions instruction (CHAT-14) ~60 s and 1 in 5
+    # answers empty (the budget spent on reasoning). Measured without
+    # reasoning: ~1 s, ~2 s with suggestions. Planning and the extraction
+    # calls keep their reasoning.
+    reply_reasoning: bool = field(
+        default_factory=lambda: os.environ.get("CWYM_QWEN3_REPLY_REASONING", "false").strip().lower()
+        in ("1", "true", "yes")
+    )

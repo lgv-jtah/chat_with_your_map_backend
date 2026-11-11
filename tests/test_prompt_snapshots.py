@@ -71,7 +71,7 @@ class _RecordingLlm:
         return {"steps": []}
 
     def generate(
-        self, prompt: str, streaming_callback=None, max_tokens=None, label="generate", system_prompt=None
+        self, prompt: str, streaming_callback=None, max_tokens=None, label="generate", system_prompt=None, reasoning=True
     ) -> str:
         self.generate_prompts.append((label, prompt))
         self.system_prompts.append((label, system_prompt))

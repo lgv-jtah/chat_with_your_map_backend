@@ -72,6 +72,7 @@ class StubQwen3Generator:
         max_tokens: int | None = None,
         label: str = "generate",
         system_prompt: str | None = None,
+        reasoning: bool = True,
     ) -> str:
         """Produce a canned German reply based on the built prompt.
 

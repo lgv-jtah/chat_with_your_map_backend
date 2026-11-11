@@ -26,7 +26,7 @@ class _Llm:
         self.reply = reply if isinstance(reply, str) else json.dumps(reply)
         self.prompts = []
 
-    def generate(self, prompt, max_tokens=None, label="generate", system_prompt=None):
+    def generate(self, prompt, max_tokens=None, label="generate", system_prompt=None, reasoning=True):
         self.prompts.append((label, prompt))
         return self.reply
 

@@ -45,6 +45,12 @@ def test_no_marker_means_everything_is_answer():
     assert _stream("Auf der Karte siehst du 5 Krankenhäuser.", 4) == ("Auf der Karte siehst du 5 Krankenhäuser.", [])
 
 
+def test_suggestions_the_map_cant_do_are_dropped():
+    block = "\n- Navigiere zur nächsten Station\n- Show directions to it\n- Zeige Schulen in Altona\n- Hospitals near me"
+
+    assert parse_items(block) == ["Zeige Schulen in Altona"]
+
+
 def test_items_are_cleaned_and_limited():
     block = "\n1. „Zeige Schulen“\n* Zeige Kitas\n- Zeige Kitas\n• " + "x" * 121 + "\n- Zeige Parks\n- Zeige Seen\n- Fünf"
 
@@ -58,7 +64,7 @@ class _StreamingLlm:
         self.reply = reply
         self.prompts = []
 
-    def generate(self, prompt, streaming_callback=None, max_tokens=None, label="generate", system_prompt=None):
+    def generate(self, prompt, streaming_callback=None, max_tokens=None, label="generate", system_prompt=None, reasoning=True):
         self.prompts.append(prompt)
         if streaming_callback:
             for i in range(0, len(self.reply), 4):
@@ -116,3 +122,17 @@ def test_older_clients_are_not_asked_for_suggestions():
     prompt, _ = _reply(None, bridge)
 
     assert "VORSCHLÄGE" not in prompt and bridge.commands == []
+
+
+def test_the_reply_runs_without_reasoning_by_default():
+    calls = []
+
+    class Llm(_StreamingLlm):
+        def generate(self, prompt, **kwargs):
+            calls.append(kwargs.get("reasoning"))
+            return super().generate(prompt, **kwargs)
+
+    TextResponseComponent(load_profile("hamburg"), llm=Llm("Ok.")).run(_AGGREGATED, "q", commands=_COMMANDS)
+    TextResponseComponent(load_profile("hamburg"), llm=Llm("Ok."), reasoning=True).run(_AGGREGATED, "q", commands=_COMMANDS)
+
+    assert calls == [False, True]

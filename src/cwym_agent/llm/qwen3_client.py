@@ -246,6 +246,7 @@ class Qwen3Client:
         max_tokens: int | None = None,
         label: str = "generate",
         system_prompt: str | None = None,
+        reasoning: bool = True,
     ) -> str:
         """Generate a reply/short answer for the built prompt (German
         unless ``system_prompt`` says otherwise).
@@ -270,6 +271,8 @@ class Qwen3Client:
             enough on its own to tell them apart in the logs.
         :param system_prompt: replaces the default German answer system
             prompt, e.g. ``answer_system_prompt("en")`` for an English reply.
+        :param reasoning: False switches the model's reasoning off for this
+            call (vLLM ``chat_template_kwargs.enable_thinking``).
         """
 
         effective_max_tokens = max_tokens if max_tokens is not None else self.settings.max_tokens_generate
@@ -287,6 +290,7 @@ class Qwen3Client:
                 max_tokens=effective_max_tokens,
                 stream=True,
                 stream_options={"include_usage": True},
+                **({} if reasoning else {"extra_body": {"chat_template_kwargs": {"enable_thinking": False}}}),
             )
 
             for chunk in stream:
