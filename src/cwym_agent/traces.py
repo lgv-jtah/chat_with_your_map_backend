@@ -108,6 +108,13 @@ def _format_turn(record: dict) -> str:
 
 
 def _matches(record: dict, prefix: str) -> bool:
+    """A threadId or runId prefix - or ``threadId/runId(-prefix)``, the
+    form older addon versions copied with "Kopieren" (CHAT-23)."""
+
+    prefix = prefix.strip()
+    if "/" in prefix:
+        thread_id, _, run_prefix = prefix.partition("/")
+        return record.get("threadId") == thread_id and (record.get("runId") or "").startswith(run_prefix)
     return any((record.get(key) or "").startswith(prefix) for key in ("threadId", "runId"))
 
 

@@ -381,8 +381,9 @@ In Docker the traces also go to `/var/log/cwym/traces.jsonl` on the
 not, and is capped at 5 x 20 MB.
 
 **Finding a conversation.** The chat shows a "Vorgangs-ID" under every
-answer's steps (expand "▸ n Schritte"); the copy button copies
-`threadId/runId`. Any prefix of either id works:
+answer's steps (expand "▸ n Schritte"); the copy button copies its
+full `runId`. Any prefix of a runId or threadId works, and so does
+`threadId/runId` (what older addon versions copied):
 
 ```bash
 make trace ID=3f2a9c1e          # the whole conversation, readable
