@@ -115,6 +115,7 @@ Qwen3Settings` and `cwym_agent.geodata.settings.GeodataSettings`):
 | `CWYM_QWEN3_API_KEY` | `EMPTY` | API key (the server tested against requires no real auth) |
 | `CWYM_QWEN3_TIMEOUT` | `60` | Request timeout (seconds) |
 | `CWYM_QWEN3_MAX_TOKENS_PLAN` | `6144` | Max tokens for the planning call (covers the reasoning trace + tool calls) - the conversation-context block + planning rules give Qwen3 more to reason through than a bare query, and reasoning length is highly variable run to run, so this needs generous headroom |
+| `CWYM_QWEN3_REPLY_REASONING` | `false` | Whether the final reply call reasons before answering. Off: ~1-2 s per reply instead of ~4 s (and ~60 s with follow-up suggestions); planning and extraction calls always reason |
 | `CWYM_QWEN3_MAX_TOKENS_GENERATE` | `2048` | Max tokens for the final reply generation call - the conversation-context block gives Qwen3 more to reason through before answering than a bare query, so this needs generous headroom, same rationale as `CWYM_QWEN3_MAX_TOKENS_PLAN` |
 | `CWYM_LAYER_SEARCH_URL` | *(profile: `layer_catalog.url`)* | Overrides the city profile's layer catalog endpoint |
 | `CWYM_LAYER_EMBED_MODEL` | `sentence-transformers/all-MiniLM-L6-v2` | Embedding model for layer search |
@@ -175,6 +176,9 @@ The profile is loaded and validated once at startup and passed into
   `udp_analysis` tool, which is only offered when `analysis_agent` is set.
 - `languages` are the answer languages (German and English are supported;
   the first is the default). Hamburg offers both.
+- `exclusive_layer_groups` lists portal layers of which only one may be
+  visible (e.g. alternative colourings of the same buildings): switching
+  one on switches the others off. Hamburg has none.
 
 A new city needs a profile and, where its services differ from existing
 adapters, an adapter module plus its name in the profile schema.
@@ -229,6 +233,11 @@ no LLM rewords the numbers.
   service fails, the reply says so instead of giving a number. Missing
   values are counted ("keine Angabe") and the reply says what was left
   out.
+
+On the map, a client that declares the commands
+(`forwardedProps.supported_commands`, see `docs/frontend-api.md`) gets the
+matching features as `HIGHLIGHT_FEATURES` and a distribution as
+`SHOW_CHART`; older clients get the filter overlay and the text.
 
 Spatial or multi-step questions (nearest, distances, several layers) go
 to the tier 2 analysis agent where the profile has one (Hamburg: UDP).

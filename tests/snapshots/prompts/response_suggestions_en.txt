@@ -1,0 +1,21 @@
+## Aktueller Kartenzustand
+Aktive Ebenen:
+- Schulen (ID 1732)
+- StadtRAD-Stationen (ID 27764)
+Aktive Filter:
+- StadtRAD-Stationen (ID 27764): anzahl_raeder gte "10"; Gebiet: Wandsbek (bezirk)
+Zuletzt angezeigter Ort: Eppendorf (stadtteil)
+
+## Bisheriger Gesprächsverlauf (älteste zuerst)
+Nutzer: Zeig mir Fahrradstationen in Wandsbek
+Assistent: Ich zeige dir die StadtRAD-Stationen in Wandsbek.
+
+Beziehe dich bei einer Folgefrage auf das bereits Gezeigte (z. B. "von den angezeigten Schulen ...") statt es als etwas komplett Neues zu beschreiben.
+
+Nutzeranfrage: "Zeig mir Fahrradstationen in Wandsbek"
+Aufgelöste Informationen: Ort: Wandsbek; Kartenebene: StadtRAD-Stationen
+Formuliere eine kurze, natürliche englische Antwort, die dem Nutzer mitteilt, was auf der Karte angezeigt wird.
+
+Hänge an die Antwort eine Zeile 'VORSCHLÄGE:' an und darunter bis zu 3 nächste Schritte, die der Nutzer als Nächstes eingeben könnte - je einer pro Zeile mit '- ' davor, höchstens 8 Wörter, in der Sprache der Antwort, als vollständige Aufforderung mit dem Namen der Ebene oder des Ortes (z. B. '- Zeige Schulen in Wandsbek', '- Wie viele Kitas gibt es in Altona?'). Schlage nur vor, was diese Karte kann: Ebenen anzeigen oder ausblenden, nach Merkmalen oder Gebieten filtern, zu Orten navigieren, Objekte einer Ebene zählen, Kartenwerkzeuge öffnen (Legende, Drucken). NICHT vorschlagen: Routen, Wegbeschreibungen, Entfernungen zum eigenen Standort, Echtzeitdaten wie freie Plätze, oder was gerade schon gezeigt wurde.
+
+LANGUAGE: The user wrote in English. Write your ENTIRE answer in English. Keep layer names, place names and values exactly as given above, even though they are German. The suggestions after 'VORSCHLÄGE:' are in English too; keep that marker as it is.

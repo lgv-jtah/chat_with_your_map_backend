@@ -21,6 +21,7 @@ _T = {
         "with": " mit {conditions}",
         "and": " und ",
         "contains": "enthält",
+        "chart_title": "{attr}: Verteilung{where}",
         "missing_bucket": "keine Angabe",
         "other_bucket": "Sonstige",
         "count_layer": "„{layer}“: {n} Treffer{where}{cond}.",
@@ -64,6 +65,7 @@ _T = {
         "with": " with {conditions}",
         "and": " and ",
         "contains": "contains",
+        "chart_title": "{attr}: distribution{where}",
         "missing_bucket": "not specified",
         "other_bucket": "other",
         "count_layer": "“{layer}”: {n} matches{where}{cond}.",
@@ -114,6 +116,28 @@ def format_number(value, language: str) -> str:
     number = round(float(value), 2)
     text = str(int(number)) if number.is_integer() else f"{number:.2f}".rstrip("0").rstrip(".")
     return text.replace(".", ",") if language == "de" else text
+
+
+def chart(answer: DatasetAnswer, language: str) -> dict | None:
+    """The SHOW_CHART payload for a distribution (camelCase wire names),
+    in ``language``; None for anything else. Same numbers as the text."""
+
+    if answer.status != "ok" or answer.operation != "distribution" or not answer.computed.buckets:
+        return None
+    t, ctx = _T[language], _Context(answer, language)
+    base = ctx.base()
+    data = []
+    for bucket in answer.computed.buckets:
+        label = t["missing_bucket"] if bucket.kind == "missing" else t["other_bucket"] if bucket.kind == "other" else bucket.label
+        data.append({"label": label, "value": bucket.count, "color": bucket.color, "kind": bucket.kind})
+    return {
+        "title": t["chart_title"].format(attr=base["attr"], where=f" ({answer.area_name})" if answer.area_name else ""),
+        "chartType": "bar",
+        "data": data,
+        "total": answer.computed.total,
+        "datasetKey": answer.dataset_key,
+        "attribute": answer.attribute,
+    }
 
 
 def render(answer: DatasetAnswer, language: str) -> str:

@@ -194,6 +194,7 @@ class DatasetAnswer:
     """``cwym_agent.geodata.analysis.Computed`` when status is "ok"."""
     dataset_label: dict[str, str] | None = None
     """A declared dataset's localized plural ("Gebäude"); None for a plain layer."""
+    dataset_key: str | None = None
     layer_id: str | None = None
     layer_name: str | None = None
     attribute: str | None = None

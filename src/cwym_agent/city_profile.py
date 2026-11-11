@@ -279,6 +279,23 @@ class CityProfile(_Strict):
     datasets: dict[Identifier, DatasetConfig] = Field(default_factory=dict)
     """Tier 1 datasets with typed attributes (14.4). Counting works on any
     filterable layer without one; the other operations need it."""
+    exclusive_layer_groups: list[list[str]] = Field(default_factory=list)
+    """Portal layers of which only one may be visible at a time (e.g.
+    alternative colourings of the same buildings): switching one on
+    switches the others off (14.5)."""
+
+    @field_validator("exclusive_layer_groups")
+    @classmethod
+    def _groups(cls, v: list[list[str]]) -> list[list[str]]:
+        seen: set[str] = set()
+        for group in v:
+            if len(group) < 2 or len(set(group)) != len(group):
+                raise ValueError(f"a group needs at least 2 different layer ids, got {group}")
+            twice = seen & set(group)
+            if twice:
+                raise ValueError(f"layers {sorted(twice)} are in more than one group")
+            seen |= set(group)
+        return v
 
     @field_validator("languages")
     @classmethod

@@ -104,6 +104,7 @@ Things to know:
 | `state` | no | Current map state, see table below. Omit or send `{}` on the first turn. |
 | `tools`, `context` | yes (AG-UI) | Send `[]`. Not used. |
 | `forwardedProps` | yes (AG-UI) | Send at least `{}`. |
+| `forwardedProps.supported_commands` | no, recommended | The MapCommand types this client executes, e.g. `["SHOW_CHART", "SHOW_SUGGESTIONS", "HIGHLIGHT_FEATURES", "START_TOUR"]`. The backend only sends types beyond the original set (marked "on request" in the table in section 4) to clients that list them; unknown names are ignored. Without it, a client gets what it got before CHAT-14. |
 | `forwardedProps.ui_language` | no, recommended | The portal's current UI language (i18next `language`, e.g. `"en"` or `"en-GB"`). Only used when the message itself doesn't tell the answer language (see "Answer language" below). |
 | `forwardedProps.portal_context` | no, but strongly recommended | Which layers this portal offers. Layer search is then limited to them, and `state` layer ids are checked against them. **Without it, layer search runs against all ~6,500 Hamburg layers, and all `state` layer ids/filters are dropped.** Use exactly one of two modes, see below; mixing them, an empty `layers` list, or only one URL fails with 400. |
 
@@ -255,22 +256,32 @@ arrive. Log and ignore unknown types; don't fail on them.
 | [`ADD_RESULT_LAYER`](#add_result_layer) | yes | Add one layer of a UDP analysis result |
 | [`CLEAR_RESULT_LAYERS`](#clear_result_layers) | yes | Remove all UDP result layers |
 | [`OPEN_TOOL`](#open_tool) | yes | Open a portal menu tool (print, legend, contact, …) |
-| [`HIGHLIGHT_FEATURE`](#highlight_feature) | not yet | Highlight one feature |
+| [`HIGHLIGHT_FEATURES`](#highlight_features) | on request | Highlight features (a built-in analysis result) |
+| [`SHOW_CHART`](#show_chart) | on request | Show a bar chart next to the answer |
+| [`SHOW_SUGGESTIONS`](#show_suggestions) | on request | Offer up to 3 follow-up questions as buttons |
+| [`START_TOUR`](#start_tour) | on request (from CHAT-17) | Play a guided tour |
 | [`CLEAR_HIGHLIGHTS`](#clear_highlights) | not yet | Remove highlights |
 | [`SET_LANGUAGE`](#set_language) | not yet | Switch the UI language |
 
-"Not yet" types are part of the schema so a dispatcher can handle all of
-them, but no current backend code path sends them.
+"On request" types are only sent to clients that list them in
+`forwardedProps.supported_commands`; a client that doesn't gets the
+older equivalent (e.g. `APPLY_FILTER` instead of `HIGHLIGHT_FEATURES`)
+or nothing (charts, suggestions). "Not yet" types are part of the schema
+so a dispatcher can handle all of them, but no current backend code path
+sends them.
 
 ### Typical sequences
 
 | User intent | Commands, in order |
 |---|---|
-| Show a layer at a place ("Zeige … in Altona") | (`DEACTIVATE_LAYER`), `ACTIVATE_LAYER`, `DRAW_BOUNDARY`, `NAVIGATE_TO_LOCATION`, `ZOOM_TO_EXTENT`. Each one appears only if it applies; e.g. no `DRAW_BOUNDARY` for a street address without an area. |
+| Show a layer at a place ("Zeige … in Altona") | (`DEACTIVATE_LAYER`, also for the other layers of an exclusive group), `ACTIVATE_LAYER`, `DRAW_BOUNDARY`, `NAVIGATE_TO_LOCATION`, `ZOOM_TO_EXTENT`. Each one appears only if it applies; e.g. no `DRAW_BOUNDARY` for a street address without an area. |
 | Filter / spatial restriction ("Fahrradstationen in Wandsbek", "nur Gymnasien") | (`DEACTIVATE_LAYER` if the layer is currently visible), `APPLY_FILTER`, (`ZOOM_TO_EXTENT`) |
 | Remove a filter ("zeig wieder alle") | `CLEAR_FILTER`, `ACTIVATE_LAYER` (same layer id) |
 | UDP analysis | `CLEAR_RESULT_LAYERS`, `ADD_RESULT_LAYER` × n (`context` layers first, then `result`), `ZOOM_TO_EXTENT` |
 | Open a tool ("öffne die Legende", "Zeig mir die Legende", "Drucke die Karte") | `OPEN_TOOL` |
+| Built-in count, top-N, min/max, lookup ("Wie viele Krankenhäuser in Wandsbek?", "die 5 ältesten Gebäude", "Hugo-Wolf-Straße 57") | `HIGHLIGHT_FEATURES` (or, for older clients, `APPLY_FILTER`), `ZOOM_TO_EXTENT` |
+| Built-in distribution ("Wie verteilen sich die Energieklassen?") | (`DEACTIVATE_LAYER` for the other layers of an exclusive group), `ACTIVATE_LAYER` (the attribute's display layer, if the profile names one), `SHOW_CHART` (on request), (`ZOOM_TO_EXTENT`) |
+| Any answer written by the LLM (not built-in analyses, UDP answers or the ambiguity question) | `SHOW_SUGGESTIONS` after `TEXT_MESSAGE_END` (on request) |
 | Small talk / unclear request | no commands, only the text answer |
 | Ambiguous place ("Grundschulen in Hoheluft": Hoheluft-Ost and -West) | no commands; the answer asks "Den Ort gibt es mehrfach – meinst du Hoheluft-Ost oder Hoheluft-West? …". The user's reply ("Hoheluft-West", "West") is turned back into the full original question by the backend - just send it as the next user message. |
 
@@ -473,9 +484,94 @@ click opens the result feature first.
 | `toolName` | `"PRINT" \| "LEGEND" \| "SHARE" \| "ABOUT" \| "CONTACT"` | Open that menu panel. Masterportal mapping: `print`, `legend`, `shareView` (secondary menu), `about` (main menu), `contact` (secondary menu). If the portal has no such module configured, do nothing. |
 | `prefill` | `{subject?, message?}` or `null` | Meant for pre-filling the contact form. **Defined in the schema but never set yet**; always `null`/missing today. |
 
-### `HIGHLIGHT_FEATURE`
+### `HIGHLIGHT_FEATURES`
 
-*Not sent yet.* `payload: {layerId: string, featureId: string}`.
+On request. The features a built-in analysis is about (a count, the top-N,
+the extreme values, a lookup).
+
+```json
+{"commandId": "9c1e…", "type": "HIGHLIGHT_FEATURES", "payload": {
+  "features": {"type": "FeatureCollection", "features": [ …5 features… ]},
+  "style": "query",
+  "label": "Wandsbek",
+  "totalMatched": null
+}}
+```
+
+| Field | Type | Notes |
+|---|---|---|
+| `features` | `GeoJSONFeatureCollection` | WGS84. All properties included. |
+| `style` | `"query"` \| `"selection"` | `query`: the answer to a question. `selection`: what the user picked on the map (CHAT-16). Style them differently. |
+| `label` | `string?` | The area, the looked-up address or the layer name. |
+| `totalMatched` | `int?` | Set when more matched than `features` holds (only the first ones are drawn). |
+
+Draw them in one highlight layer on top; the next `HIGHLIGHT_FEATURES` or a
+`CLEAR_HIGHLIGHTS` replaces it. A `ZOOM_TO_EXTENT` follows.
+
+### `SHOW_CHART`
+
+On request. A chart next to the answer. The answer text always lists the
+same numbers, so the chart is never the only place they appear.
+
+```json
+{"commandId": "4b7a…", "type": "SHOW_CHART", "payload": {
+  "title": "Energieeffizienzklasse: Verteilung",
+  "chartType": "bar",
+  "data": [
+    {"label": "A+", "value": 1, "color": "#16a34a", "kind": "value"},
+    {"label": "H", "value": 105, "color": "#991b1b", "kind": "value"},
+    {"label": "keine Angabe", "value": 36, "color": null, "kind": "missing"}
+  ],
+  "total": 235,
+  "datasetKey": "buildings",
+  "attribute": "energieeffizienzklasse"
+}}
+```
+
+| Field | Type | Notes |
+|---|---|---|
+| `title` | `string` | In the answer language. |
+| `chartType` | `"bar"` | Only bars for now. |
+| `data[]` | `{label, value, color?, kind}` | In display order (an ordinal attribute in its declared order, categories by count). `color` from the city profile, else your default. `kind`: `value`, `other` ("Sonstige") or `missing` ("keine Angabe") - style the last two apart. |
+| `total` | `int?` | Features the chart is about (for percentages). |
+| `datasetKey`, `attribute` | `string?` | What was counted. |
+
+### `SHOW_SUGGESTIONS`
+
+On request. Sent after `TEXT_MESSAGE_END` of an answer written by the LLM.
+
+```json
+{"commandId": "7d20…", "type": "SHOW_SUGGESTIONS", "payload": {
+  "items": ["Zeige Schulen in Altona", "Wie viele Kitas gibt es dort?"]
+}}
+```
+
+`items`: 1-3 short texts (max. 120 characters) in the answer's language.
+Show them as buttons below the answer; a click sends the text as the next
+user message. Drop them when the user sends anything else.
+
+### `START_TOUR`
+
+On request; sent from CHAT-17 (guided tours). Play the steps in order:
+wait `delayMs`, execute `commands` with the normal executor, type out
+`narration` as an assistant message. Disable the chat input while the tour
+plays and let the user stop it. At the end, show `followUp` and offer
+`suggestions` like `SHOW_SUGGESTIONS`.
+
+```json
+{"commandId": "a51f…", "type": "START_TOUR", "payload": {
+  "tourId": "harthof",
+  "steps": [
+    {"delayMs": 0, "narration": "Willkommen im Harthof …", "commands": [
+      {"commandId": "s1", "type": "ACTIVATE_LAYER", "payload": {"layerIds": ["gsm:ascend_baugruppen_energieeffizienzklasse"]}}
+    ]}
+  ],
+  "followUp": "Möchtest du etwas genauer erkunden?",
+  "suggestions": ["Zeig alle Gebäude mit Energieklasse H"]
+}}
+```
+
+Step `commands` are full MapCommands (never another `START_TOUR`).
 
 ### `CLEAR_HIGHLIGHTS`
 

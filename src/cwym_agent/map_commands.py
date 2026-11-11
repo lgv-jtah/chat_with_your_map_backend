@@ -13,7 +13,7 @@ of the matching AG-UI ``TOOL_CALL_RESULT`` event.
 ``CommandBuilderComponent`` today - the other types are modeled here
 for closed-enum completeness (so the frontend dispatcher has a real
 schema to switch on) but nothing in the pipeline constructs them yet:
-``SET_LANGUAGE``/``HIGHLIGHT_FEATURE``/``CLEAR_HIGHLIGHTS`` need intent
+``SET_LANGUAGE``/``CLEAR_HIGHLIGHTS`` need intent
 detection that's explicitly out of scope for this change (language-
 switch detection, an explicit "clear the map" intent). This is
 deliberate, not an oversight.
@@ -48,7 +48,7 @@ starts with ``CLEAR_RESULT_LAYERS`` to remove the previous one's.
 
 from typing import Annotated, Any, Literal, Union
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 from pydantic.alias_generators import to_camel
 
 from cwym_agent.city_profile import LocationKind
@@ -114,9 +114,19 @@ class DrawBoundaryPayload(_CamelModel):
     `label` without guessing."""
 
 
-class HighlightFeaturePayload(_CamelModel):
-    layer_id: str
-    feature_id: str
+class HighlightFeaturesPayload(_CamelModel):
+    """Features to emphasise on the map (a tier 1 result, CHAT-14) - drawn
+    in their own highlight layer, which the next HIGHLIGHT_FEATURES or a
+    CLEAR_HIGHLIGHTS replaces."""
+
+    features: dict
+    """A GeoJSON FeatureCollection (WGS84)."""
+    style: Literal["query", "selection"] = "query"
+    """"query": the answer to a question; "selection": what the user
+    picked on the map (CHAT-16)."""
+    label: str | None = None
+    total_matched: int | None = None
+    """How many matched in total, if more than ``features``."""
 
 
 class ClearHighlightsPayload(_CamelModel):
@@ -197,6 +207,62 @@ class SetLanguagePayload(_CamelModel):
     language_code: str
 
 
+HexColor = Annotated[str, Field(pattern=r"^#[0-9a-fA-F]{6}$")]
+ShortText = Annotated[str, Field(min_length=1, max_length=120)]
+
+
+class ChartPoint(_CamelModel):
+    label: str = Field(min_length=1, max_length=100)
+    value: float
+    color: HexColor | None = None
+    kind: Literal["value", "other", "missing"] = "value"
+    """"other": the "Sonstige" bar of a top-K distribution; "missing":
+    features without a value - lets the UI style them apart."""
+
+
+class ShowChartPayload(_CamelModel):
+    """A chart next to the answer (CHAT-14). The answer text carries the
+    same numbers - the chart is never the only place they appear."""
+
+    title: str = Field(min_length=1, max_length=200)
+    chart_type: Literal["bar"] = "bar"
+    data: list[ChartPoint] = Field(min_length=1, max_length=50)
+    total: int | None = None
+    """The number of features the chart is about (for percentages)."""
+    dataset_key: str | None = None
+    attribute: str | None = None
+
+
+class ShowSuggestionsPayload(_CamelModel):
+    """Follow-up questions to offer as buttons; clicking one sends it as
+    the next user message. In the answer's language."""
+
+    items: list[ShortText] = Field(min_length=1, max_length=3)
+
+
+class TourStep(_CamelModel):
+    delay_ms: int = Field(ge=0, le=120_000)
+    """Wait before this step, after the previous one's narration."""
+    commands: list["MapCommand"] = Field(default_factory=list)
+    narration: str = Field(min_length=1)
+
+    @model_validator(mode="after")
+    def _no_nested_tours(self) -> "TourStep":
+        if any(command.type == "START_TOUR" for command in self.commands):
+            raise ValueError("a tour step can't start another tour")
+        return self
+
+
+class StartTourPayload(_CamelModel):
+    """A guided tour (CHAT-17): the addon plays the steps' commands with the
+    normal executor and types out the narration."""
+
+    tour_id: str = Field(min_length=1)
+    steps: list[TourStep] = Field(min_length=1, max_length=50)
+    follow_up: str | None = None
+    suggestions: list[ShortText] = Field(default_factory=list, max_length=3)
+
+
 # -- per-type commands ------------------------------------------------------
 
 
@@ -229,9 +295,9 @@ class DrawBoundaryCommand(_MapCommandBase):
     payload: DrawBoundaryPayload
 
 
-class HighlightFeatureCommand(_MapCommandBase):
-    type: Literal["HIGHLIGHT_FEATURE"] = "HIGHLIGHT_FEATURE"
-    payload: HighlightFeaturePayload
+class HighlightFeaturesCommand(_MapCommandBase):
+    type: Literal["HIGHLIGHT_FEATURES"] = "HIGHLIGHT_FEATURES"
+    payload: HighlightFeaturesPayload
 
 
 class ClearHighlightsCommand(_MapCommandBase):
@@ -269,21 +335,66 @@ class SetLanguageCommand(_MapCommandBase):
     payload: SetLanguagePayload
 
 
-MapCommand = Annotated[
-    Union[
-        ActivateLayerCommand,
-        DeactivateLayerCommand,
-        NavigateToLocationCommand,
-        ZoomToExtentCommand,
-        DrawBoundaryCommand,
-        HighlightFeatureCommand,
-        ClearHighlightsCommand,
-        ApplyFilterCommand,
-        ClearFilterCommand,
-        AddResultLayerCommand,
-        ClearResultLayersCommand,
-        OpenToolCommand,
-        SetLanguageCommand,
-    ],
-    Field(discriminator="type"),
-]
+class ShowChartCommand(_MapCommandBase):
+    type: Literal["SHOW_CHART"] = "SHOW_CHART"
+    payload: ShowChartPayload
+
+
+class ShowSuggestionsCommand(_MapCommandBase):
+    type: Literal["SHOW_SUGGESTIONS"] = "SHOW_SUGGESTIONS"
+    payload: ShowSuggestionsPayload
+
+
+class StartTourCommand(_MapCommandBase):
+    type: Literal["START_TOUR"] = "START_TOUR"
+    payload: StartTourPayload
+
+
+_COMMANDS = (
+    ActivateLayerCommand,
+    DeactivateLayerCommand,
+    NavigateToLocationCommand,
+    ZoomToExtentCommand,
+    DrawBoundaryCommand,
+    HighlightFeaturesCommand,
+    ClearHighlightsCommand,
+    ApplyFilterCommand,
+    ClearFilterCommand,
+    AddResultLayerCommand,
+    ClearResultLayersCommand,
+    OpenToolCommand,
+    SetLanguageCommand,
+    ShowChartCommand,
+    ShowSuggestionsCommand,
+    StartTourCommand,
+)
+
+MapCommand = Annotated[Union[_COMMANDS], Field(discriminator="type")]
+
+TourStep.model_rebuild()
+StartTourPayload.model_rebuild()
+StartTourCommand.model_rebuild()
+
+COMMAND_TYPES: tuple[str, ...] = tuple(command.model_fields["type"].default for command in _COMMANDS)
+"""Every MapCommand type, in declaration order."""
+
+LEGACY_COMMAND_TYPES: frozenset[str] = frozenset(
+    {
+        "ACTIVATE_LAYER", "DEACTIVATE_LAYER", "NAVIGATE_TO_LOCATION", "ZOOM_TO_EXTENT", "DRAW_BOUNDARY",
+        "APPLY_FILTER", "CLEAR_FILTER", "ADD_RESULT_LAYER", "CLEAR_RESULT_LAYERS", "OPEN_TOOL",
+        "CLEAR_HIGHLIGHTS",
+    }
+)
+"""What a client that doesn't send ``supported_commands`` executes - the
+addon before CHAT-15. The backend only emits other types to clients that
+declare them."""
+
+
+def supported_command_types(declared) -> frozenset[str]:
+    """The command types to emit for a client: the known types it declares
+    (``forwardedProps.supported_commands``), always including the legacy
+    ones; the legacy set when it declares nothing usable."""
+
+    if not isinstance(declared, list):
+        return LEGACY_COMMAND_TYPES
+    return LEGACY_COMMAND_TYPES | {t for t in declared if isinstance(t, str) and t in COMMAND_TYPES}

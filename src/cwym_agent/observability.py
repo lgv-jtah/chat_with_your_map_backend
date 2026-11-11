@@ -471,6 +471,7 @@ class RunTrace:
             # Not user content: an ISO code and where it came from.
             "language": request.get("language"),
             "languageSource": request.get("languageSource"),
+            "supportedCommands": request.get("supportedCommands"),
             "history": [
                 {"role": entry.get("role"), "text": _redact(entry.get("text"))}
                 for entry in request.get("history") or []

@@ -31,6 +31,7 @@ from cwym_agent.components.text_response import TextResponseComponent
 from cwym_agent.geodata.conversation_context import ConversationContext
 from cwym_agent.geodata.portal_catalog_resolver import LayerCatalog
 from cwym_agent.llm.qwen3_client import Qwen3Client
+from cwym_agent.settings import Qwen3Settings
 from cwym_agent.geodata.real_data_services import RealDataServices
 
 logger = logging.getLogger(__name__)
@@ -73,8 +74,8 @@ def build_pipeline(
     pipeline.add_component("master_agent", MasterAgentComponent(profile, llm=llm))
     pipeline.add_component("agent_executor", AgentExecutorComponent(data_services=data_services))
     pipeline.add_component("result_aggregator", ResultAggregatorComponent())
-    pipeline.add_component("command_builder", CommandBuilderComponent())
-    pipeline.add_component("text_response", TextResponseComponent(profile, llm=llm))
+    pipeline.add_component("command_builder", CommandBuilderComponent(profile.exclusive_layer_groups))
+    pipeline.add_component("text_response", TextResponseComponent(profile, llm=llm, reasoning=Qwen3Settings().reply_reasoning))
 
     pipeline.connect("master_agent.plan_json", "agent_executor.plan_json")
     pipeline.connect("agent_executor.execution_log", "result_aggregator.execution_log")
@@ -93,6 +94,7 @@ def run_pipeline(
     context: ConversationContext | None = None,
     layer_catalog: LayerCatalog | None = None,
     language: str | None = None,
+    supported_commands: frozenset[str] | None = None,
 ) -> str:
     """Run the pipeline for one query, returning the final response text.
 
@@ -109,6 +111,8 @@ def run_pipeline(
         FilterAgent targeting), not just the bare id list.
     :param language: the turn's answer language (``cwym_agent.language``);
         None means the profile's default.
+    :param supported_commands: the MapCommand types the client executes
+        (``map_commands.supported_command_types``); None = the legacy set.
     """
 
     result = pipeline.run(
@@ -127,13 +131,19 @@ def run_pipeline(
                 "layer_catalog": layer_catalog,
             },
             "result_aggregator": {"query": query},
-            "command_builder": {"context": context, "bridge": bridge},
+            "command_builder": {
+                "context": context,
+                "bridge": bridge,
+                "supported_commands": supported_commands,
+                "language": language,
+            },
             "text_response": {
                 "query": query,
                 "context": context,
                 "layer_catalog": layer_catalog,
                 "bridge": bridge,
                 "language": language,
+                "supported_commands": supported_commands,
             },
         }
     )

@@ -32,6 +32,7 @@ from cwym_agent.city_profile import CityProfile, CityProfileError, load_profile
 from cwym_agent.geodata import clarification
 from cwym_agent.geodata.conversation_context import build_context, current_query
 from cwym_agent.language import resolve_language
+from cwym_agent.map_commands import LEGACY_COMMAND_TYPES, supported_command_types
 from cwym_agent.geodata.portal_catalog_resolver import PortalCatalogResolver, build_inline_catalog
 from cwym_agent.geodata.settings import GeodataSettings
 from cwym_agent.observability import bind_ids, configure_logging, start_run
@@ -234,7 +235,11 @@ async def query_endpoint(
 
     # The answer language: the user's message as typed, earlier messages,
     # the portal's UI language, the profile's default (CHAT-7).
-    ui_language = (inp.forwarded_props or {}).get("ui_language")
+    forwarded = inp.forwarded_props if isinstance(inp.forwarded_props, dict) else {}
+    # MapCommand types the client executes (CHAT-14); older clients
+    # declare none and get only the legacy types.
+    supported_commands = supported_command_types(forwarded.get("supported_commands"))
+    ui_language = forwarded.get("ui_language")
     language = resolve_language(
         query, context.history, ui_language if isinstance(ui_language, str) else None, profile.languages
     )
@@ -271,6 +276,7 @@ async def query_endpoint(
                 catalogLayers=len(allowed_layer_ids) if allowed_layer_ids is not None else None,
                 language=language.code,
                 languageSource=language.source,
+                supportedCommands=sorted(supported_commands - LEGACY_COMMAND_TYPES),
             )
             if trace.content == "full":
                 logger.info(
@@ -291,6 +297,7 @@ async def query_endpoint(
                 context=context,
                 layer_catalog=catalog,
                 language=language.code,
+                supported_commands=supported_commands,
             )
             bridge.run_finished()
         except Exception as exc:  # noqa: BLE001 - surfaced to the client as RUN_ERROR

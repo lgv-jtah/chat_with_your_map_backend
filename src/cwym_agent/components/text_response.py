@@ -38,12 +38,16 @@ from haystack import component
 
 from cwym_agent import observability
 from cwym_agent.bridge import AGUIEventBridge
+from cwym_agent.components.suggestions import INSTRUCTION as SUGGESTIONS_INSTRUCTION
+from cwym_agent.components.suggestions import SuggestionSplitter
+from cwym_agent.components.suggestions import split as split_suggestions
 from cwym_agent.city_profile import CityProfile
 from cwym_agent.geodata import analysis_text, clarification
 from cwym_agent.geodata.conversation_context import ConversationContext, render_context_block
 from cwym_agent.geodata.portal_catalog_resolver import LayerCatalog
 from cwym_agent.language import LANGUAGE_NAMES
 from cwym_agent.llm.qwen3_client import Qwen3Client, answer_system_prompt
+from cwym_agent.map_commands import ShowSuggestionsCommand, ShowSuggestionsPayload
 
 logger = logging.getLogger(__name__)
 
@@ -68,6 +72,8 @@ _LANGUAGE_DIRECTIVE = (
 prompts themselves: last in the prompt, where it outweighs the German
 around it (ASCEND's finding)."""
 
+_SUGGESTIONS_LANGUAGE = " The suggestions after 'VORSCHLÄGE:' are in {name} too; keep that marker as it is."
+
 
 def _log_answer(text: str, verbatim: bool) -> None:
     source = "fixed/verbatim" if verbatim else "generated"
@@ -81,9 +87,14 @@ def _log_answer(text: str, verbatim: bool) -> None:
 
 @component
 class TextResponseComponent:
-    def __init__(self, profile: CityProfile, llm: Any | None = None):
+    def __init__(self, profile: CityProfile, llm: Any | None = None, reasoning: bool = False):
+        """:param reasoning: whether the reply LLM reasons before answering
+        (``CWYM_QWEN3_REPLY_REASONING``)."""
+
         self.llm = llm if llm is not None else Qwen3Client()
+        self.reasoning = reasoning
         self.default_language = profile.default_language
+        self.example_places = profile.prompt.example_places
 
     @component.output_types(response_text=str)
     def run(
@@ -95,11 +106,16 @@ class TextResponseComponent:
         layer_catalog: LayerCatalog | None = None,
         bridge: AGUIEventBridge | None = None,
         language: str | None = None,
+        supported_commands: frozenset[str] | None = None,
     ):
         """:param language: the answer language (ISO 639-1) resolved for
-        this turn; None means the profile's default."""
+        this turn; None means the profile's default.
+        :param supported_commands: the MapCommand types the client
+        executes; with SHOW_SUGGESTIONS the reply ends with follow-up
+        suggestions, sent as that command (never as text)."""
 
         language = language or self.default_language
+        wants_suggestions = "SHOW_SUGGESTIONS" in (supported_commands or ())
         verbatim = self._analysis_reply(aggregated.get("analysis_result"), language)
         if verbatim is None:
             verbatim = self._ambiguous_location_reply(aggregated.get("ambiguous_location"), language)
@@ -116,8 +132,11 @@ class TextResponseComponent:
             _log_answer(verbatim, verbatim=True)
             return {"response_text": verbatim}
 
-        prompt = self._build_response_prompt(aggregated, query, commands or [], context, layer_catalog, language)
+        prompt = self._build_response_prompt(
+            aggregated, query, commands or [], context, layer_catalog, language, suggestions=wants_suggestions
+        )
         system_prompt = answer_system_prompt(language)
+        splitter = SuggestionSplitter() if wants_suggestions else None
 
         if bridge:
             message_id = str(uuid.uuid4())
@@ -125,15 +144,36 @@ class TextResponseComponent:
 
             full_text: list[str] = []
 
-            def on_token(chunk):
-                full_text.append(chunk.content)
-                bridge.emit(TextMessageContentEvent(message_id=message_id, delta=chunk.content))
+            def send(text: str) -> None:
+                if text:
+                    full_text.append(text)
+                    bridge.emit(TextMessageContentEvent(message_id=message_id, delta=text))
 
-            self.llm.generate(prompt, streaming_callback=on_token, label="text_response", system_prompt=system_prompt)
+            def on_token(chunk):
+                send(splitter.feed(chunk.content) if splitter else chunk.content)
+
+            self.llm.generate(
+                prompt, streaming_callback=on_token, label="text_response", system_prompt=system_prompt,
+                reasoning=self.reasoning,
+            )
+            items: list[str] = []
+            if splitter:
+                rest, items = splitter.finish()
+                send(rest)
             bridge.emit(TextMessageEndEvent(message_id=message_id))
             response_text = "".join(full_text)
+            if items:
+                bridge.command(
+                    ShowSuggestionsCommand(
+                        command_id=str(uuid.uuid4()), payload=ShowSuggestionsPayload(items=items)
+                    ).model_dump(by_alias=True)
+                )
         else:
-            response_text = self.llm.generate(prompt, label="text_response", system_prompt=system_prompt)
+            response_text = self.llm.generate(
+                prompt, label="text_response", system_prompt=system_prompt, reasoning=self.reasoning
+            )
+            if splitter:
+                response_text, _ = split_suggestions(response_text)
 
         _log_answer(response_text, verbatim=False)
         return {"response_text": response_text}
@@ -164,6 +204,7 @@ class TextResponseComponent:
         context: ConversationContext | None,
         layer_catalog: LayerCatalog | None,
         language: str,
+        suggestions: bool = False,
     ) -> str:
         """Build the NLG instruction prompt handed to ``self.llm.generate``.
 
@@ -186,6 +227,14 @@ class TextResponseComponent:
 
         names = LANGUAGE_NAMES[language]
         directive = _LANGUAGE_DIRECTIVE.format(name=names.english) if language != "de" else ""
+        if suggestions:
+            # The instruction goes before the language directive (that
+            # stays last), and the directive covers the suggestions too -
+            # ASCEND's finding: they drift into the prompt's language.
+            if directive:
+                directive += _SUGGESTIONS_LANGUAGE.format(name=names.english)
+            place1, place2 = self.example_places[:2]
+            directive = SUGGESTIONS_INSTRUCTION["de"].format(place1=place1, place2=place2) + directive
 
         context_block = render_context_block(context, layer_catalog) if context is not None else ""
         context_note = (

@@ -65,23 +65,26 @@ Altona" is still a map request, not the Share panel.
 import logging
 import re
 import uuid
+from collections.abc import Sequence
 
 from haystack import component
 from shapely.geometry import shape
 
 from cwym_agent.bridge import AGUIEventBridge
+from cwym_agent.geodata import analysis_text
 from cwym_agent.geodata.conversation_context import ConversationContext
 from cwym_agent.geodata.types import FilterResult
 from cwym_agent.map_commands import (
+    LEGACY_COMMAND_TYPES,
     ActivateLayerCommand,
+    ActivateLayerPayload,
     AddResultLayerCommand,
     AddResultLayerPayload,
-    ClearResultLayersCommand,
-    ActivateLayerPayload,
     ApplyFilterCommand,
     ApplyFilterPayload,
     ClearFilterCommand,
     ClearFilterPayload,
+    ClearResultLayersCommand,
     Coordinates,
     DeactivateLayerCommand,
     DeactivateLayerPayload,
@@ -90,11 +93,15 @@ from cwym_agent.map_commands import (
     FilterAreaPayload,
     FilterConditionPayload,
     FilterSpecPayload,
+    HighlightFeaturesCommand,
+    HighlightFeaturesPayload,
     NamedLocation,
     NavigateToLocationCommand,
     NavigateToLocationPayload,
     OpenToolCommand,
     OpenToolPayload,
+    ShowChartCommand,
+    ShowChartPayload,
     ZoomToExtentCommand,
     ZoomToExtentPayload,
 )
@@ -157,16 +164,54 @@ def _detect_tool_name(query: str) -> str | None:
     return None
 
 
+def apply_exclusive_groups(commands: list[dict], groups: Sequence[Sequence[str]]) -> list[dict]:
+    """Before each ACTIVATE_LAYER of a layer in an exclusive group, a
+    DEACTIVATE_LAYER for the group's other layers (except those switched
+    on by the same command). Switching off a hidden layer changes
+    nothing, so this doesn't depend on knowing what is visible."""
+
+    group_of = {layer_id: group for group in groups for layer_id in group}
+    result = []
+    for command in commands:
+        if command["type"] == "ACTIVATE_LAYER":
+            activated = set(command["payload"]["layerIds"])
+            siblings = sorted(
+                {other for layer_id in activated for other in group_of.get(layer_id, ())} - activated
+            )
+            if siblings:
+                result.append(
+                    DeactivateLayerCommand(
+                        command_id=str(uuid.uuid4()), payload=DeactivateLayerPayload(layer_ids=siblings)
+                    ).model_dump(by_alias=True)
+                )
+        result.append(command)
+    return result
+
+
 @component
 class CommandBuilderComponent:
+    def __init__(self, exclusive_layer_groups: Sequence[Sequence[str]] = ()):
+        """:param exclusive_layer_groups: the profile's groups of layers of
+        which only one may be visible at a time."""
+
+        self.exclusive_layer_groups = [list(group) for group in exclusive_layer_groups]
     @component.output_types(commands=list)
     def run(
         self,
         aggregated: dict,
         context: ConversationContext | None = None,
         bridge: AGUIEventBridge | None = None,
+        supported_commands: frozenset[str] | None = None,
+        language: str | None = None,
     ):
-        commands = self._build_commands(aggregated, context)
+        """:param supported_commands: the command types the client executes
+        (``map_commands.supported_command_types``); None = the legacy set.
+        :param language: the answer language, for chart titles and labels."""
+
+        commands = self._build_commands(
+            aggregated, context, supported_commands or LEGACY_COMMAND_TYPES, language or "de"
+        )
+        commands = apply_exclusive_groups(commands, self.exclusive_layer_groups)
         if commands:
             logger.info("command_builder: %s", [cmd["type"] for cmd in commands])
         else:
@@ -179,7 +224,13 @@ class CommandBuilderComponent:
 
         return {"commands": commands}
 
-    def _build_commands(self, aggregated: dict, context: ConversationContext | None = None) -> list[dict]:
+    def _build_commands(
+        self,
+        aggregated: dict,
+        context: ConversationContext | None = None,
+        supported: frozenset[str] = LEGACY_COMMAND_TYPES,
+        language: str = "de",
+    ) -> list[dict]:
         # Checked before the action_detector-gated branches below,
         # unconditionally: Qwen3's plan can legitimately call filter_agent
         # without also calling action_detector (the intent is already
@@ -197,7 +248,7 @@ class CommandBuilderComponent:
             return []
 
         if aggregated.get("dataset_answer") is not None:
-            return self._build_dataset_commands(aggregated, context)
+            return self._build_dataset_commands(aggregated, context, supported, language)
 
         if aggregated.get("filter_result") is not None:
             return self._build_filter_commands(aggregated, context)
@@ -365,13 +416,16 @@ class CommandBuilderComponent:
             )
         return commands, to_clear
 
-    def _build_dataset_commands(self, aggregated: dict, context: ConversationContext | None) -> list[dict]:
-        """A tier 1 analysis (architecture 14.4) on the map, with the
-        commands that exist until SHOW_CHART/HIGHLIGHT_FEATURES (CHAT-14):
+    def _build_dataset_commands(
+        self, aggregated: dict, context: ConversationContext | None, supported: frozenset[str], language: str
+    ) -> list[dict]:
+        """A tier 1 analysis (architecture 14.4) on the map:
 
-        - distribution: the attribute's display layer is switched on;
-        - count, top, min/max, lookup: the features it is about as the
-          filter overlay, and the view on them;
+        - distribution: the attribute's display layer is switched on, plus
+          SHOW_CHART if the client executes it;
+        - count, top, min/max, lookup: the features it is about -
+          HIGHLIGHT_FEATURES if the client executes it, else the filter
+          overlay - and the view on them;
         - average, sum, or no number: the map stays as it is (apart from
           the area, if one was named).
         """
@@ -390,13 +444,40 @@ class CommandBuilderComponent:
                         payload=ActivateLayerPayload(layer_ids=[answer.display_layer]),
                     ).model_dump(by_alias=True)
                 )
+            chart = analysis_text.chart(answer, language) if "SHOW_CHART" in supported else None
+            if chart is not None:
+                commands.append(
+                    ShowChartCommand(command_id=str(uuid.uuid4()), payload=ShowChartPayload.model_validate(chart))
+                    .model_dump(by_alias=True)
+                )
             return commands + self._zoom_to_area(aggregated)
 
-        if not (answer.features and answer.layer_id):
+        if not answer.features or (not answer.layer_id and "HIGHLIGHT_FEATURES" not in supported):
             return self._zoom_to_area(aggregated)
 
         computed = answer.computed
         total = computed.total if answer.operation == "count" else len(answer.features)
+        if "HIGHLIGHT_FEATURES" in supported:
+            commands = [
+                HighlightFeaturesCommand(
+                    command_id=str(uuid.uuid4()),
+                    payload=HighlightFeaturesPayload(
+                        features={"type": "FeatureCollection", "features": answer.features},
+                        label=answer.area_name or getattr(computed, "lookup_key", None) or answer.layer_name,
+                        total_matched=total if total > len(answer.features) else None,
+                    ),
+                ).model_dump(by_alias=True)
+            ]
+            zoom = self._zoom_to_area(aggregated)
+            bbox = None if zoom else _features_bbox(answer.features)
+            if bbox is not None:
+                zoom = [
+                    ZoomToExtentCommand(
+                        command_id=str(uuid.uuid4()), payload=ZoomToExtentPayload(bbox=_min_span(bbox))
+                    ).model_dump(by_alias=True)
+                ]
+            return commands + zoom
+
         overlay = FilterResult(
             layer_id=answer.layer_id,
             features={"type": "FeatureCollection", "features": answer.features},

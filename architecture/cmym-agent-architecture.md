@@ -1935,6 +1935,15 @@ New MapCommands, in `map_commands.py` and `docs/frontend-api.md`:
 - **Suggestions:** the reply LLM ends with a suggestions block; `text_response` splits it off and emits `SHOW_SUGGESTIONS`. Clicking one sends it as the next user message.
 - **Tours:** a `start_tour` sub-agent loads the tour from the profile in the answer language and emits `START_TOUR`; the addon's tour player runs the step commands with the normal executor and types out the narration. The chat input is disabled while it plays, and the user can stop it.
 
+**Implemented in the backend (CHAT-14);** the addon follows in CHAT-15.
+
+- The four commands are validated models in `map_commands.py`, documented with examples in `docs/frontend-api.md`. `SHOW_CHART` data points carry a `kind` (`value`, `other`, `missing`) so the UI can style "Sonstige" and "keine Angabe" apart; `START_TOUR` step commands are full MapCommands (no nested tours).
+- **Rollout:** the client lists the types it executes in `forwardedProps.supported_commands`; the new types go only to clients that list them, older addons keep the previous behaviour (`APPLY_FILTER` overlay for tier 1, no charts, no suggestions). Backend and addon can be deployed independently. The trace records the declared types.
+- Tier 1 uses `HIGHLIGHT_FEATURES` for count, top-N, min/max and lookup, and `SHOW_CHART` next to the display layer for a distribution - titles and bucket labels in the answer language, the same numbers as the fixed answer text.
+- **Suggestions:** only asked for when the client supports them, so other clients' prompts are unchanged. The instruction sits before the language directive, which also covers the suggestions. `components/suggestions.py` holds back the end of the streamed answer until it can't be the start of the `VORSCHLÄGE:` marker, so the block never shows as text. Tier 1 and UDP answers, which are not written by the LLM, have none.
+- **Reply without reasoning:** measured on the same reply prompt, the suggestions instruction made Qwen3 reason ~10x longer (58 s median instead of 4 s, 1 in 5 answers empty because reasoning used up the token budget). The reply only words decided facts, so it now runs with reasoning off (`enable_thinking=false`; `CWYM_QWEN3_REPLY_REASONING=true` restores it): ~1-2 s per reply. The honesty prompts (nothing changed, filter failed, truncated) were re-checked live without reasoning. Planning and extraction keep reasoning. Suggestions relative to the user's own position or routes are dropped in code.
+- **Exclusive groups:** `exclusive_layer_groups` in the profile; a final pass over each turn's commands puts the siblings' `DEACTIVATE_LAYER` before every `ACTIVATE_LAYER` of a member. Switching off a hidden layer is a no-op, so the pass doesn't depend on knowing what is visible.
+
 ### 14.6 Plan
 
 **Phase 1, first deliverable: Munich on CWYM basics.** Layers, places and filters work in the Munich portal, in German and English.
@@ -1952,8 +1961,8 @@ New MapCommands, in `map_commands.py` and `docs/frontend-api.md`:
 
 9. Tier 1 in `FilterAgent`: `file` source, typed dataset declarations, the fixed operations, full-data aggregation (no truncation), numbers inserted unchanged into the reply; ASCEND buildings as a Munich dataset with the refresh script. Engine done (CHAT-11, 14.4); the ASCEND dataset is CHAT-12.
 10. Tier 2: `udp_analysis` → generic `analysis_agent` behind `AnalysisAgent`, UDP as the Hamburg adapter, offered only where the profile configures it; "not available here" reply and planning rule for cities without tier 2.
-11. `SHOW_CHART`, `SHOW_SUGGESTIONS`, `START_TOUR`, `HIGHLIGHT_FEATURES` in backend, contract and addon.
-12. Exclusive layer groups.
+11. `SHOW_CHART`, `SHOW_SUGGESTIONS`, `START_TOUR`, `HIGHLIGHT_FEATURES` in backend, contract and addon. Backend and contract done (CHAT-14, 14.5); addon is CHAT-15.
+12. Exclusive layer groups. Done (CHAT-14).
 13. Feature selection by click and `state.selectedFeatures`.
 14. Harthof tour as `profiles/munich/tours/harthof.yaml`, figures as tier 1 placeholders.
 

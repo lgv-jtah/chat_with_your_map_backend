@@ -170,6 +170,20 @@ class TestPlan:
 
 
 class TestGenerate:
+    def test_reasoning_can_be_switched_off_per_call(self):
+        bodies = []
+
+        def handler(request: httpx2.Request) -> httpx2.Response:
+            bodies.append(json.loads(request.content))
+            return httpx2.Response(200, headers={"content-type": "text/event-stream"}, content=_sse({"content": "Ok."}))
+
+        client = Qwen3Client(_settings(), http_client=httpx2.Client(transport=httpx2.MockTransport(handler)))
+        client.generate("PROMPT")
+        client.generate("PROMPT", reasoning=False)
+
+        assert "chat_template_kwargs" not in bodies[0]
+        assert bodies[1]["chat_template_kwargs"] == {"enable_thinking": False}
+
     def test_streams_content_only_and_discards_reasoning(self):
         body = _sse(
             {"role": "assistant", "content": ""},

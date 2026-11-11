@@ -168,3 +168,62 @@ class TestReply:
         )["response_text"]
 
         assert reply == expected
+
+
+class TestNewCommands:
+    """CHAT-14: clients that declare the new commands get them."""
+
+    _NEW = frozenset({"HIGHLIGHT_FEATURES", "SHOW_CHART"})
+
+    def _build(self, answer, operation, supported, language="de"):
+        from cwym_agent.map_commands import LEGACY_COMMAND_TYPES
+
+        log = AgentExecutorComponent(_Services(answer)).run(_steps(operation))["execution_log"]
+        aggregated = ResultAggregatorComponent().run(log, "q")["aggregated"]
+        return CommandBuilderComponent()._build_commands(aggregated, None, LEGACY_COMMAND_TYPES | supported, language)
+
+    def test_count_highlights_instead_of_the_filter_overlay(self):
+        commands = self._build(_count_answer(), "count", self._NEW)
+
+        assert [c["type"] for c in commands] == ["HIGHLIGHT_FEATURES", "ZOOM_TO_EXTENT"]
+        payload = commands[0]["payload"]
+        assert payload["style"] == "query" and payload["label"] == "Nordviertel"
+        assert len(payload["features"]["features"]) == 3 and payload["totalMatched"] is None
+
+    def test_legacy_clients_keep_the_overlay(self):
+        assert [c["type"] for c in self._build(_count_answer(), "count", frozenset())] == ["APPLY_FILTER", "ZOOM_TO_EXTENT"]
+
+    def test_distribution_chart_has_the_texts_numbers(self, tmp_path):
+        from fixtures.datasets import buildings_profile
+
+        from cwym_agent.geodata import analysis_text
+        from cwym_agent.geodata.filter_agent import FilterAgent
+        from cwym_agent.geodata.tier1 import Tier1Analyzer, load_datasets
+
+        class Llm:
+            def generate(self, *args, **kwargs):
+                return '{"attribute": "energieeffizienzklasse"}'
+
+        profile = buildings_profile(tmp_path)
+        analyzer = Tier1Analyzer(FilterAgent(profile.prompt.area_terms, llm=Llm()), load_datasets(profile.datasets), profile.name)
+        answer = analyzer.analyze("Verteilung der Energieklassen", "distribution", LayerMatch("x", "test_gebaeude", 1))
+
+        de = self._build(answer, "distribution", self._NEW)
+        en = self._build(answer, "distribution", self._NEW, "en")
+
+        assert [c["type"] for c in de] == ["ACTIVATE_LAYER", "SHOW_CHART", "ZOOM_TO_EXTENT"]
+        chart = de[1]["payload"]
+        assert chart["title"] == "Energieeffizienzklasse: Verteilung"  # analysed without an area
+        assert chart["data"][0] == {"label": "A+", "value": 1.0, "color": "#16a34a", "kind": "value"}
+        assert chart["data"][-1] == {"label": "keine Angabe", "value": 2.0, "color": None, "kind": "missing"}
+        assert (chart["total"], chart["datasetKey"], chart["attribute"]) == (12, "buildings", "energieeffizienzklasse")
+        text_lines = dict(line[2:].split(": ") for line in analysis_text.render(answer, "de").splitlines() if line.startswith("- "))
+        assert {p["label"]: str(int(p["value"])) for p in chart["data"]} == text_lines
+        assert en[1]["payload"]["title"] == "energy efficiency class: distribution"
+        assert en[1]["payload"]["data"][-1]["label"] == "not specified"
+
+    def test_no_chart_for_legacy_clients(self):
+        answer = DatasetAnswer(operation="distribution", status="ok", computed=Computed("distribution", total=12),
+                               display_layer="test_energieklasse")
+
+        assert [c["type"] for c in self._build(answer, "distribution", frozenset())] == ["ACTIVATE_LAYER", "ZOOM_TO_EXTENT"]
