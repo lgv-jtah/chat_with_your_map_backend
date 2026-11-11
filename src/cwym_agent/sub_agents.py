@@ -138,6 +138,24 @@ def sub_agent_specs(profile: CityProfile) -> list[SubAgentSpec]:
                         "type": "string",
                         "description": "Die Nutzeranfrage oder der relevante Filteranteil davon.",
                     },
+                    "layerId": {
+                        "type": "string",
+                        "description": (
+                            "ID einer bereits angezeigten Ebene aus 'Aktive Ebenen' oder 'Aktive "
+                            "Filter' im Kontext, wenn die Anfrage diese Ebene einschränkt oder "
+                            f"auswertet (z.B. 'nur die Gymnasien', 'davon in {places[1]}'). Dann KEIN "
+                            "layer_resolver. Bei einer neuen Ebene weglassen und layer_resolver aufrufen."
+                        ),
+                    },
+                    "mode": {
+                        "type": "string",
+                        "enum": ["refine", "replace"],
+                        "description": (
+                            "Nur mit layerId: 'refine', wenn ein aktiver Filter dieser Ebene weiter "
+                            "eingeschränkt wird (gleiches Gebiet, zusätzliche Bedingung); 'replace' "
+                            "für einen neuen Filter dieser Ebene (z.B. ein anderes Gebiet)."
+                        ),
+                    },
                     "operation": {
                         "type": "string",
                         "enum": list(OPERATIONS),

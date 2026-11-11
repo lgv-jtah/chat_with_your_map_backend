@@ -227,3 +227,36 @@ class TestNewCommands:
                                display_layer="test_energieklasse")
 
         assert [c["type"] for c in self._build(answer, "distribution", frozenset())] == ["ACTIVATE_LAYER", "ZOOM_TO_EXTENT"]
+
+
+class TestFollowUpOnAnActiveLayer:
+    """CHAT-25: planning rule 2 says to pass an active layer's id instead of
+    calling layer_resolver - the tool must accept it, and the executor must
+    use it."""
+
+    def test_filter_agent_declares_layer_id_and_mode(self):
+        from cwym_agent.city_profile import load_profile
+        from cwym_agent.sub_agents import sub_agent_specs
+
+        spec = next(s for s in sub_agent_specs(load_profile("hamburg")) if s.name == "filter_agent")
+
+        assert {"layerId", "mode", "operation"} <= set(spec.parameters["properties"])
+        assert spec.parameters["properties"]["mode"]["enum"] == ["refine", "replace"]
+
+    def test_count_on_the_layer_named_by_layer_id(self):
+        from cwym_agent.geodata.portal_catalog_resolver import LayerCatalog
+
+        schools = LayerMatch("WFS Schulen", "8712", 1.0, typ="WFS", url="https://wfs.example", feature_type="schulen")
+        catalog = LayerCatalog({"8712": schools})
+        services = _Services(_count_answer())
+        plan = {"steps": [
+            {"agent_name": "location_extractor", "args": {"query": "Altona"}},
+            {"agent_name": "filter_agent", "args": {
+                "query": "Wie viele Gymnasien gibt es in Altona?", "operation": "count", "layerId": "8712", "mode": "replace",
+            }},
+        ]}
+
+        AgentExecutorComponent(services).run(plan, layer_catalog=catalog)
+
+        [(_, operation, layer, location)] = services.calls
+        assert (operation, layer.layer_id, layer.feature_type, location) == ("count", "8712", "schulen", _AREA)
