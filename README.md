@@ -115,6 +115,7 @@ Qwen3Settings` and `cwym_agent.geodata.settings.GeodataSettings`):
 | `CWYM_QWEN3_API_KEY` | `EMPTY` | API key (the server tested against requires no real auth) |
 | `CWYM_QWEN3_TIMEOUT` | `60` | Request timeout (seconds) |
 | `CWYM_QWEN3_MAX_TOKENS_PLAN` | `6144` | Max tokens for the planning call (covers the reasoning trace + tool calls) - the conversation-context block + planning rules give Qwen3 more to reason through than a bare query, and reasoning length is highly variable run to run, so this needs generous headroom |
+| `CWYM_QWEN3_REPLY_REASONING` | `false` | Whether the final reply call reasons before answering. Off: ~1-2 s per reply instead of ~4 s (and ~60 s with follow-up suggestions); planning and extraction calls always reason |
 | `CWYM_QWEN3_MAX_TOKENS_GENERATE` | `2048` | Max tokens for the final reply generation call - the conversation-context block gives Qwen3 more to reason through before answering than a bare query, so this needs generous headroom, same rationale as `CWYM_QWEN3_MAX_TOKENS_PLAN` |
 | `CWYM_LAYER_SEARCH_URL` | *(profile: `layer_catalog.url`)* | Overrides the city profile's layer catalog endpoint |
 | `CWYM_LAYER_EMBED_MODEL` | `sentence-transformers/all-MiniLM-L6-v2` | Embedding model for layer search |
