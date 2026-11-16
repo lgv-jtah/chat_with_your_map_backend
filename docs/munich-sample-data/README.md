@@ -1,148 +1,136 @@
-# Beispieldaten für die Anbindung München (CWYM)
+# Anbindung München an CWYM: Bestandsaufnahme und offene Fragen
 
-Dieses Verzeichnis zeigt, welche Daten wir von der Landeshauptstadt München
-benötigen, um Chat With Your Map (CWYM) an das Geoportal München und das
-ASCEND-Projektgebiet Harthof anzubinden.
+Stand: 16.11.2026
 
-## Das Wichtigste vorab
+Chat With Your Map (CWYM) soll im ASCEND-Portal Harthof laufen. Dafür braucht
+CWYM vier Datenquellen: Adresssuche, Layer-Index, Verwaltungsgrenzen und die
+ASCEND-Gebäudedaten.
 
-**Die Werte dürfen erfunden sein, die Struktur nicht.**
+Ursprünglich wollten wir dafür Beispieldaten aus München anfragen. Beim Prüfen
+hat sich gezeigt, dass alle vier Quellen bereits öffentlich erreichbar sind
+(ohne Anmeldung, CORS für alle Ursprünge freigegeben). **Beispiel- oder
+Dummy-Daten brauchen wir daher nicht mehr.** Dieses Dokument fasst zusammen,
+was wir gefunden haben, und listet die Fragen, die nur München beantworten
+kann.
 
-Die Dateien in diesem Ordner sind Beispiele in der Form, wie sie heute aus den
-Hamburger Diensten kommen, nur mit Münchner Werten gefüllt. Sie dienen zur
-Orientierung, nicht als Vorlage zum Nachbauen.
+## 1. Adresssuche
 
-Für uns zählt, wie die Antworten Ihrer Dienste **tatsächlich** aussehen:
-Feldnamen, Verschachtelung, Koordinatensystem, Datentypen, leere Werte. Genau
-daran passen wir unsere Anbindung an. Bitte schicken Sie uns daher:
+- Dienst: `https://geoportal.muenchen.de/search/p1_adressen_4326/_search/template`
+- Abfrage wie im ASCEND-Portal: Template `all_features`, Parameter
+  `search_term` und `size`.
+- Treffertypen (`_source.properties.type`): `Address` (rund 162.000),
+  `Street` (rund 6.300), `District` (25 Stadtbezirke).
+- Name in `properties.searchfield`, Punkt in `_source.geometry` (WGS84),
+  Ausdehnung in `properties.geographicextent`.
 
-- je Dienst **5–10 Treffer als unveränderte JSON-Antwort**, so wie der Dienst
-  sie liefert (Inhalte dürfen gekürzt oder anonymisiert sein, Feldnamen und
-  Aufbau bitte nicht ändern);
-- dazu die **Anfrage**, mit der die Antwort erzeugt wurde (URL, Parameter, ggf.
-  Template-ID und Request-Body).
+Beobachtungen:
 
-Diese Antworten verwenden wir außerdem als Testdaten, damit die Anbindung ohne
-Live-Zugriff auf Ihre Dienste getestet werden kann.
+- Die Ausdehnung ist bei allen Treffern ein Rechteck, auch bei
+  Stadtbezirken. Die echten Grenzen holen wir deshalb aus dem WFS (Abschnitt 3).
+- Bezirksteile und Gebietsnamen wie „Harthof“ sind nicht enthalten.
+- Zwischen Straße und Hausnummer stehen mehrere Leerzeichen
+  (`"Hugo-Wolf-Straße  57"`).
+- Der Index wird offenbar täglich neu aufgebaut (`p1_adressen_4326_<Datum>`).
 
-## Übersicht
+## 2. Layer-Index
 
-| Nr. | Datei | Dienst | Wofür CWYM ihn braucht |
-|---|---|---|---|
-| 1 | `01_adresssuche_beispiel.json` | Adresssuche (`p1_adressen_4326`) | Orte, Straßen und Adressen finden („Zoom zum Harthof“) |
-| 2 | `02_layerindex_beispiel.json` | Layer-Index (`portal.ascend_harthof`) | passende Kartenebenen zu einer Frage finden |
-| 3 | `03_stadtbezirke_beispiel.geojson` | Verwaltungsgrenzen | Filter „in Milbertshofen-Am Hart“ mit der amtlichen Grenze |
-| 4 | `04_gebaeude_beispiel.geojson` | Gebäudedaten (`gsm:ascend_gebaeude_gfi`) | Statistiken, Top-N, Adressabfrage zu den Gebäuden |
+- Dienst: `https://geoportal.muenchen.de/search/portal.ascend_harthof/_search/template`
+- Abfrage wie im ASCEND-Portal: Template `all_layers`, Parameter
+  `query_string`, `typ`, `size`, `fuzziness`.
+- 35 Layer. Je Layer: `id`, `name` (oft zweisprachig, z. B.
+  „ASCEND Energieeffizienzklasse | building energy efficiency class“),
+  `layers`, `url` sowie `datasets` mit `md_id`, `md_name` und einem Verweis
+  auf die Metadaten (CSW).
+- 32 der 35 IDs stehen in `services-internet.json`. Es fehlen `terrain`,
+  `20260623_testdaten_harthof` und `einzelbaum_punkt`.
 
-## 1. Adresssuche (`p1_adressen_4326`)
+Beobachtungen:
 
-Bitte drei Antworten schicken: eine Suche nach einer **vollständigen Adresse**
-(z. B. „Hugo-Wolf-Straße 57“), nach einer **Straße** und nach einem
-**Gebietsnamen** (z. B. „Harthof“ oder „Milbertshofen-Am Hart“).
-
-Das Beispiel enthält der Kürze halber je einen Treffer für Adresse, Straße und
-Stadtbezirk in einer Antwort. Bitte schicken Sie stattdessen drei getrennte
-Antworten mit allen Treffern, die der Dienst jeweils liefert. Aus jedem Treffer
-lesen wir:
-
-| Angabe | Feld im Beispiel | Frage an München |
-|---|---|---|
-| Anzeigename | `_source.properties.searchfield` | Welches Feld enthält den Namen? |
-| Art des Treffers | `_source.properties.type` | Welche Werte gibt es (Adresse, Straße, Stadtbezirk, Bezirksteil, …)? |
-| Koordinate | `_source.geometry` (Punkt) | Welches Koordinatensystem? Wir erwarten WGS84 (EPSG:4326), Reihenfolge Länge, Breite. |
-| Gebietsumriss (optional) | `_source.properties.geographicextent` | Gibt es für Gebiete einen Umriss oder ein Rechteck? |
-| Relevanz | `_score` | – |
-
-Weitere Fragen:
-
-- Welche Search-Template-ID und welche Parameter werden verwendet? Oder ist
-  eine normale `_search`-Anfrage mit Query-Body erlaubt?
-- Darf ein Server (unser Backend) den Dienst direkt abfragen? Gibt es
-  IP-Freigaben, CORS-Einschränkungen oder Ratenlimits?
-
-## 2. Layer-Index (`portal.ascend_harthof`)
-
-Bitte eine Antwort auf eine Suche nach z. B. „Energie“ oder „Gebäude“ schicken,
-idealerweise auch einmal den **vollständigen Index** (alle Layer eines Portals).
-
-Je Layer lesen wir:
-
-| Angabe | Feld im Beispiel |
-|---|---|
-| Layer-ID | `_source.id` |
-| Name | `_source.name` |
-| Diensttyp (WMS, WFS, OAF, …) | `_source.typ` |
-| Dienst-URL | `_source.url` |
-| Beschreibung | `_source.datasets[0].description` |
-| Schlagwörter | `_source.datasets[0].keywords` |
-
-Fragen:
-
-- Stimmen die Layer-IDs mit den IDs in `services-internet.json` überein? Das
-  ist Voraussetzung dafür, dass CWYM die Ebenen im Masterportal schalten kann.
-- Gibt es einen stadtweiten Index oder nur einen je Portal?
+- Anders als in Hamburg gibt es weder Diensttyp (`typ`) noch Beschreibung oder
+  Schlagwörter im Index. Für die Suche nach passenden Ebenen haben wir damit
+  nur Name und Metadatenname.
 
 ## 3. Verwaltungsgrenzen
 
-Für Fragen wie „Wie viele Gebäude in Milbertshofen-Am Hart?“ brauchen wir die
-amtlichen Umrisse der Gebiete. Am liebsten als **OGC API Features** oder
-**WFS**, sonst als GeoJSON-Datei:
+WFS `https://geoportal.muenchen.de/geoserver/gsm_wfs/wfs`, GeoJSON in WGS84:
 
-- eine Sammlung je Gebietsebene (Stadtbezirke, Bezirksteile);
-- ein Feature je Gebiet, mit einem Feld für den **Namen** (im Beispiel
-  `bezirk_name`), so geschrieben wie in der Adresssuche;
-- Koordinaten in WGS84 (EPSG:4326).
+| Feature-Typ | Inhalt | Namensfeld |
+|---|---|---|
+| `gsm_wfs:vablock_stadtbezirk` | 25 Stadtbezirke (27 Flächen, zwei Bezirke bestehen aus zwei Teilen) | `sb_name`, Nummer `sb_nummer` |
+| `gsm_wfs:vablock_bezirksteil` | 110 Bezirksteile | nur Nummer `bt_nummer`, kein Name |
+| `gsm_wfs:vablock_viertel` | Stadtbezirksviertel | nicht geprüft |
+| `gsm_wfs:ascend_umgriff_projektgebiet` | Projektgebiet ASCEND (1 Fläche) | keine Attribute |
 
-Für das Projektgebiet bitte zusätzlich `ascend_umgriff_projektgebiet` als
-GeoJSON.
+OGC API Features ist auf dem GeoServer nicht freigeschaltet. Wir binden den
+WFS direkt an.
 
-## 4. Gebäudedaten (`gsm:ascend_gebaeude_gfi`)
+## 4. ASCEND-Gebäudedaten
 
-Am besten als **WFS oder OGC API Features**. Falls das nicht möglich ist,
-genügt ein **GeoJSON-Export** aller Gebäude (FeatureCollection, ein Feature je
-Gebäude, Koordinaten in WGS84). Werte dürfen als Text vorliegen, wie heute
-im ASCEND-Assistenten (`"baujahr": "1962"`).
+WFS `https://geoportal.muenchen.de/geoserver/gsm_wfs/wfs`, Feature-Typ
+`gsm_wfs:ascend_gebaeude_gfi_wfs`: 273 Gebäude mit 24 Attributen, Zahlen
+teilweise als echte Zahlen (`baujahr`, `geschosse`), fehlende Werte als `null`.
 
-Neben den Daten brauchen wir eine **Attributliste**. Je Attribut:
+| Attribut | Werte (Auszug) | Anmerkung |
+|---|---|---|
+| `gebid` | `000U6WC` | eindeutig |
+| `baugruppe` | `HUGO_17` (95 Gruppen) | |
+| `adresse` | `Hugo-Wolf-Straße 66` | 261 verschiedene bei 273 Gebäuden |
+| `eigentuemer` | Münchner Wohnen, LHM, Kirche | |
+| `nutzung` | Wohnen, Schule, Kita, Kirche, Wohnen/Gewerbe, … | |
+| `geschosse`, `baujahr` | Zahl | |
+| `energieeffizienzklasse` | A+ … H | 38 ohne Wert |
+| `sanierungsmassnahme`, `sanierungszustand_23`, `gebäudezustand`, `sanierungsjahr`, `sanierungsmassnahme_jahr` | z. B. „Nicht saniert“, „Abgerissen“, „Neubau“ | Jahre als Text |
+| `fernwaerme`, `fernwaerme_23`, `fernwaerme_massnahme`, `fernwaerme_massnahme_jahr` | angeschlossen, nicht angeschlossen, Anschluss geplant, … | |
+| `photovoltaik`, `photovoltaik_23`, `photovoltaik_massnahme` | `photovoltaik` mischt Jahreszahlen und Zustände („2026“, „Vorhanden“) | |
+| `pv_leistung` | `"57,04"` | Text mit Dezimalkomma, vermutlich kWp |
+| `balkon_pv` | 445, 890 | Einheit unklar |
+| `sonstiges`, `plz` | | |
 
-| Attribut | Bedeutung | Einheit | Art | Reihenfolge / Werte |
-|---|---|---|---|---|
-| `gebid` | eindeutige Gebäude-ID | – | ID | – |
-| `adresse` | Adresse | – | Text | – |
-| `eigentuemer` | Eigentümer | – | Kategorie | z. B. Münchner Wohnen, privat, … |
-| `baujahr` | Baujahr | Jahr | Zahl | – |
-| `geschosse` | Anzahl Geschosse | – | Zahl | – |
-| `energieeffizienzklasse` | Energieeffizienzklasse | – | geordnete Kategorie | A+, A, B, C, D, E, F, G, H |
-| `saniert` | Gebäude saniert | – | Kategorie | ja, nein |
-| `fernwaerme` | Fernwärmeanschluss | – | Kategorie | ja, nein |
-| `pv_leistung` | installierte PV-Leistung | kWp | Zahl | – |
+## Offene Fragen an München
 
-(Die Tabelle ist ein Beispiel. Bitte mit den echten Attributen ausfüllen.)
+**Allgemein**
 
-Zur „Art“:
+1. Dürfen wir die oben genannten Dienste (Adresssuche, Layer-Index, WFS)
+   dauerhaft serverseitig aus CWYM abfragen? Gibt es Nutzungsbedingungen,
+   Ratenlimits oder geplante Änderungen (z. B. Template-Namen)?
 
-- **Zahl:** man kann damit rechnen (Durchschnitt, Minimum, Maximum, Summe).
-- **Kategorie:** man kann zählen und eine Verteilung zeigen.
-- **Geordnete Kategorie:** wie Kategorie, aber mit fester Reihenfolge, z. B.
-  für „die 5 Gebäude mit der schlechtesten Energieklasse“.
+**Gebäudedaten**
 
-Weitere Fragen:
+2. Ist `gsm_wfs:ascend_gebaeude_gfi_wfs` der offizielle und dauerhafte WFS
+   für die Gebäudedaten, oder ein Zwischenstand? (Laut Mail ist bisher nur
+   WMS veröffentlicht.)
+3. Der ASCEND-Assistent kennt 235 Gebäude, der WFS liefert 273. Woher kommt
+   der Unterschied (z. B. abgerissene Gebäude, Neubauten, Nicht-Wohngebäude)?
+   Welche Gebäude sollen bei Statistiken mitzählen?
+4. Was bedeuten die Attributgruppen genau?
+   - Unterschied zwischen `sanierungszustand_23`, `gebäudezustand` und
+     `sanierungsmassnahme`; ebenso `fernwaerme` gegenüber `fernwaerme_23`
+     und `photovoltaik` gegenüber `photovoltaik_23`. Steht `_23` für den
+     Stand 2023?
+   - Warum enthält `photovoltaik` teils Jahreszahlen, teils Zustände?
+   - Einheiten von `pv_leistung` (kWp?) und `balkon_pv` (Wp?).
+5. Wer pflegt die Werte, und wie oft ändern sie sich?
+6. Welche Kartenebene gehört zu welchem Attribut? Unsere Annahme:
+   `gsm:ascend_baugruppen_baujahr` → `baujahr`,
+   `…_energieeffizienzklasse` → `energieeffizienzklasse`,
+   `…_eigentuemer` → `eigentuemer`, `…_nutzung` → `nutzung`,
+   `…_sanierung` → ?, `…_fernwaerme` → ?, `…_pv` und `…_pv_stand` → ?
 
-- Wie werden **fehlende Werte** dargestellt: leerer Text `""`, `null`, ein
-  Platzhalter wie `"k. A."` oder fehlt das Feld ganz? (Im Beispiel kommen alle
-  Varianten vor; bitte angeben, welche bei Ihnen gilt.)
-- Welches Dezimaltrennzeichen wird verwendet (`12,5` oder `12.5`)?
-- Wer pflegt die Werte, und wie oft ändern sie sich? Ist eine Datei, die von
-  Hand aktualisiert wird, für den Anfang in Ordnung?
-- Welche Kartenebene gehört zu welchem Attribut (z. B.
-  `gsm:ascend_baugruppen_energieeffizienzklasse` für die Energieklasse)? Dann
-  kann CWYM zu einer Statistik gleich die passende Einfärbung einschalten.
+**Grenzen und Orte**
 
-## Sonstige Fragen
+7. Gibt es für die Bezirksteile Namen, oder nur Nummern?
+8. „Harthof“ ist weder in der Adresssuche noch als Bezirksteil zu finden.
+   Sollen wir für „Harthof“ das ASCEND-Projektgebiet verwenden?
 
-- **Sprachmodell:** Welcher Anbieter und welches Modell sind vorgesehen?
-  Unterstützt es OpenAI-kompatibles Tool Calling?
-- **Protokollierung:** Dürfen Nutzerfragen in Traces gespeichert werden, oder
-  nur Metadaten?
-- **Masterportal:** Kann das ASCEND-Portal auf Masterportal 3.27 aktualisiert
-  werden?
+**Layer-Index**
+
+9. Gibt es einen stadtweiten Layer-Index, oder nur einen je Portal?
+10. Ist geplant, Beschreibungen oder Schlagwörter in den Index aufzunehmen?
+
+**Betrieb**
+
+11. Welches Sprachmodell bzw. welcher Anbieter ist vorgesehen, und unterstützt
+    es OpenAI-kompatibles Tool Calling?
+12. Dürfen Nutzerfragen zur Fehleranalyse protokolliert werden, oder nur
+    Metadaten?
+13. Kann das ASCEND-Portal auf Masterportal 3.27 aktualisiert werden?
