@@ -13,9 +13,12 @@ environment at a mirror.
 import httpx
 
 from cwym_agent.city_profile import BoundariesConfig, GeocoderConfig, LayerCatalogConfig
+from cwym_agent.geodata.adapters.es_addr_search import EsAddrSearchGeocoder
+from cwym_agent.geodata.adapters.es_layer_index import EsLayerIndexSource
 from cwym_agent.geodata.adapters.hamburg_addr_search import HamburgAddrSearchGeocoder
 from cwym_agent.geodata.adapters.hamburg_layers_es import HamburgLayersEsSource
 from cwym_agent.geodata.adapters.ogc_api_features import OgcApiFeaturesBoundaries
+from cwym_agent.geodata.adapters.wfs_boundaries import WfsBoundaries
 from cwym_agent.geodata.interfaces import BoundarySource, Geocoder, LayerCatalogSource
 from cwym_agent.geodata.settings import GeodataSettings
 
@@ -29,6 +32,18 @@ def build_geocoder(config: GeocoderConfig, settings: GeodataSettings, http_clien
                 place_types=config.place_types,
                 http_client=http_client,
                 result_size=settings.address_result_size,
+                template_id=config.template_id,
+                query_param=config.query_param,
+            )
+        case "es_search_template":
+            return EsAddrSearchGeocoder(
+                url=settings.address_search_url or config.url,
+                broad_types=config.broad_types,
+                place_types=config.place_types,
+                http_client=http_client,
+                result_size=settings.address_result_size,
+                template_id=config.template_id,
+                query_param=config.query_param,
             )
     raise ValueError(f"Unknown geocoder adapter {config.adapter!r}")
 
@@ -44,6 +59,13 @@ def build_boundary_source(
                 http_client=http_client,
                 strip_name_prefixes=config.strip_name_prefixes,
             )
+        case "wfs":
+            return WfsBoundaries(
+                url=settings.area_boundaries_url or config.url,
+                collections={kind: (c.collection, c.name_field) for kind, c in config.collections.items()},
+                http_client=http_client,
+                strip_name_prefixes=config.strip_name_prefixes,
+            )
     raise ValueError(f"Unknown boundaries adapter {config.adapter!r}")
 
 
@@ -53,6 +75,14 @@ def build_layer_catalog_source(
     match config.adapter:
         case "hamburg_layers_es":
             return HamburgLayersEsSource(
+                url=settings.layer_search_url or config.url,
+                http_client=http_client,
+                fetch_size=settings.layer_fetch_size,
+                retries=settings.layer_fetch_retries,
+                retry_backoff=settings.layer_fetch_retry_backoff,
+            )
+        case "es_layer_index":
+            return EsLayerIndexSource(
                 url=settings.layer_search_url or config.url,
                 http_client=http_client,
                 fetch_size=settings.layer_fetch_size,

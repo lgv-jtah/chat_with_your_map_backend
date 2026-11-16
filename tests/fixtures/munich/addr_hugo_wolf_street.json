@@ -1,0 +1,287 @@
+{
+ "took": 2,
+ "timed_out": false,
+ "_shards": {
+  "total": 1,
+  "successful": 1,
+  "skipped": 0,
+  "failed": 0
+ },
+ "hits": {
+  "total": {
+   "value": 40,
+   "relation": "eq"
+  },
+  "max_score": null,
+  "hits": [
+   {
+    "_index": "p1_adressen_4326_20261116_050000",
+    "_id": "GcOJ4qEBJAUUAl6kmlTN",
+    "_score": 238.73724,
+    "_source": {
+     "id": "cb9ca61e-f439-4c04-9188-afeb9cd22c7b",
+     "type": "feature",
+     "geometry": {
+      "type": "Point",
+      "coordinates": [
+       11.567212461685042,
+       48.206793273492096
+      ]
+     },
+     "properties": {
+      "type": "Street",
+      "searchfield": "Hugo-Wolf-Straße",
+      "searchField": "Hugo-Wolf-Straße",
+      "address": "Hugo-Wolf-Straße",
+      "strasse": "Hugo-Wolf-Straße",
+      "additional_info": "Hugo-Wolf-Straße",
+      "nr": 0,
+      "hausnr": "",
+      "zusatz": "",
+      "hausnr_zusatz": "",
+      "geographicextent": {
+       "crs": {
+        "type": "name",
+        "properties": {
+         "name": "EPSG:4326"
+        }
+       },
+       "type": "Polygon",
+       "coordinates": [
+        [
+         [
+          11.567199007756805,
+          48.20678428001216
+         ],
+         [
+          11.567199007756805,
+          48.20680226697203
+         ],
+         [
+          11.567225915613278,
+          48.20680226697203
+         ],
+         [
+          11.567225915613278,
+          48.20678428001216
+         ],
+         [
+          11.567199007756805,
+          48.20678428001216
+         ]
+        ]
+       ]
+      }
+     }
+    },
+    "sort": [
+     238.73724,
+     "Hugo-Wolf-Straße",
+     "",
+     ""
+    ]
+   },
+   {
+    "_index": "p1_adressen_4326_20261116_050000",
+    "_id": "oMOJ4qEBJAUUAl6ktLQz",
+    "_score": 187.23352,
+    "_source": {
+     "id": "d2a5d617-08f1-4bd0-a266-dd9489df9fd7",
+     "type": "feature",
+     "geometry": {
+      "type": "Point",
+      "coordinates": [
+       11.567919589523914,
+       48.202019678458655
+      ]
+     },
+     "properties": {
+      "type": "Address",
+      "searchfield": "Hugo-Wolf-Straße   3",
+      "searchField": "Hugo-Wolf-Straße   3",
+      "address": "Hugo-Wolf-Straße 3",
+      "strasse": "Hugo-Wolf-Straße",
+      "hausnr": "  3",
+      "nr": 3,
+      "zusatz": "",
+      "hausnr_zusatz": "  3",
+      "additional_info": "Hugo-Wolf-Straße   3",
+      "geographicextent": {
+       "crs": {
+        "type": "name",
+        "properties": {
+         "name": "EPSG:4326"
+        }
+       },
+       "type": "Polygon",
+       "coordinates": [
+        [
+         [
+          11.567906136843826,
+          48.202010684972024
+         ],
+         [
+          11.567906136843826,
+          48.202028671945286
+         ],
+         [
+          11.567933042204002,
+          48.202028671945286
+         ],
+         [
+          11.567933042204002,
+          48.202010684972024
+         ],
+         [
+          11.567906136843826,
+          48.202010684972024
+         ]
+        ]
+       ]
+      }
+     }
+    },
+    "sort": [
+     187.23352,
+     "Hugo-Wolf-Straße",
+     "  3",
+     "  3"
+    ]
+   },
+   {
+    "_index": "p1_adressen_4326_20261116_050000",
+    "_id": "xcKJ4qEBJAUUAl6kTiNP",
+    "_score": 187.23352,
+    "_source": {
+     "id": "f3633861-64c7-46cd-a2c7-77eacb1e0424",
+     "type": "feature",
+     "geometry": {
+      "type": "Point",
+      "coordinates": [
+       11.567942586281386,
+       48.20216474639153
+      ]
+     },
+     "properties": {
+      "type": "Address",
+      "searchfield": "Hugo-Wolf-Straße   5",
+      "searchField": "Hugo-Wolf-Straße   5",
+      "address": "Hugo-Wolf-Straße 5",
+      "strasse": "Hugo-Wolf-Straße",
+      "hausnr": "  5",
+      "nr": 5,
+      "zusatz": "",
+      "hausnr_zusatz": "  5",
+      "additional_info": "Hugo-Wolf-Straße   5",
+      "geographicextent": {
+       "crs": {
+        "type": "name",
+        "properties": {
+         "name": "EPSG:4326"
+        }
+       },
+       "type": "Polygon",
+       "coordinates": [
+        [
+         [
+          11.56792913356334,
+          48.20215575290515
+         ],
+         [
+          11.56792913356334,
+          48.202173739877914
+         ],
+         [
+          11.567956038999434,
+          48.202173739877914
+         ],
+         [
+          11.567956038999434,
+          48.20215575290515
+         ],
+         [
+          11.56792913356334,
+          48.20215575290515
+         ]
+        ]
+       ]
+      }
+     }
+    },
+    "sort": [
+     187.23352,
+     "Hugo-Wolf-Straße",
+     "  5",
+     "  5"
+    ]
+   },
+   {
+    "_index": "p1_adressen_4326_20261116_050000",
+    "_id": "rMKJ4qEBJAUUAl6kSRDY",
+    "_score": 187.23352,
+    "_source": {
+     "id": "bbe33c61-7277-4701-b154-1fcfab536187",
+     "type": "feature",
+     "geometry": {
+      "type": "Point",
+      "coordinates": [
+       11.567930513399501,
+       48.202345091507595
+      ]
+     },
+     "properties": {
+      "type": "Address",
+      "searchfield": "Hugo-Wolf-Straße   7",
+      "searchField": "Hugo-Wolf-Straße   7",
+      "address": "Hugo-Wolf-Straße 7",
+      "strasse": "Hugo-Wolf-Straße",
+      "hausnr": "  7",
+      "nr": 7,
+      "zusatz": "",
+      "hausnr_zusatz": "  7",
+      "additional_info": "Hugo-Wolf-Straße   7",
+      "geographicextent": {
+       "crs": {
+        "type": "name",
+        "properties": {
+         "name": "EPSG:4326"
+        }
+       },
+       "type": "Polygon",
+       "coordinates": [
+        [
+         [
+          11.567917060634292,
+          48.20233609802147
+         ],
+         [
+          11.567917060634292,
+          48.20235408499372
+         ],
+         [
+          11.56794396616471,
+          48.20235408499372
+         ],
+         [
+          11.56794396616471,
+          48.20233609802147
+         ],
+         [
+          11.567917060634292,
+          48.20233609802147
+         ]
+        ]
+       ]
+      }
+     }
+    },
+    "sort": [
+     187.23352,
+     "Hugo-Wolf-Straße",
+     "  7",
+     "  7"
+    ]
+   }
+  ]
+ }
+}

@@ -1,0 +1,64 @@
+# City profile: Munich
+#
+# Selected with CWYM_CITY_PROFILE=munich. Schema and rules:
+# src/cwym_agent/city_profile.py, architecture: cmym-agent-architecture.md
+# Section 14.3.
+#
+# Environment variables (CWYM_*_URL) override the endpoints.
+
+id: munich
+name: München
+official_name: Landeshauptstadt München
+languages: [de, en]
+
+# Marienplatz - the address search has no city-wide hit.
+default_location:
+  name: München
+  lat: 48.1374
+  lon: 11.5755
+
+# WGS84 [minLon, minLat, maxLon, maxLat]: bounds of the union of the 25
+# Stadtbezirke (WFS gsm_wfs:vablock_stadtbezirk), rounded outward to two
+# decimals.
+extent: [11.36, 48.06, 11.73, 48.25]
+
+geocoder:
+  adapter: es_search_template
+  # Always the alias: the underlying index name carries a date suffix.
+  url: https://geoportal.muenchen.de/search/p1_adressen_4326/_search/template
+  template_id: all_features
+  query_param: search_term
+  broad_types: [District]
+  # Streets ("Street") stay unmapped.
+  place_types:
+    District: stadtbezirk
+    Address: address
+
+layer_catalog:
+  adapter: es_layer_index
+  url: https://geoportal.muenchen.de/search/portal.ascend_harthof/_search
+
+boundaries:
+  adapter: wfs
+  url: https://geoportal.muenchen.de/geoserver/gsm_wfs/wfs
+  collections:
+    stadtbezirk: {collection: "gsm_wfs:vablock_stadtbezirk", name_field: sb_name}
+
+# The ASCEND project area; the address search doesn't know it.
+named_areas:
+  - name: Harthof
+    kind: projektgebiet
+    collection: "gsm_wfs:ascend_umgriff_projektgebiet"
+    aliases: [ASCEND-Projektgebiet, Projektgebiet Harthof, Harthof project area]
+
+# Wording for the prompts and tool descriptions (German).
+prompt:
+  city_genitive: Münchens
+  area_terms: [Stadtbezirk, Stadtteil]
+  example_places: [Milbertshofen-Am Hart, Schwabing-West]
+  neighbouring_regions: [Landkreis München, Oberbayern]
+  layer_example:
+    term: Energieausweis
+    layer_name: ASCEND Energieeffizienzklasse | building energy efficiency class
+    official_term: Energieeffizienzklasse
+    official_term_reason: die Energiebewertung eines Gebäudes

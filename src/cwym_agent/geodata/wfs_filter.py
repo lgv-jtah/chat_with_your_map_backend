@@ -238,6 +238,8 @@ def build_get_feature(
     )
 
 
+_GEO_JSON_FORMAT = 'outputFormat="application/geo+json"'
+_JSON_FORMAT = 'outputFormat="application/json"'
 _NUMBER_MATCHED = re.compile(r'numberMatched="(\d+)"')
 
 
@@ -319,8 +321,17 @@ class WfsClient:
         return int(match.group(1)) if match else None
 
     def _post(self, url: str, body: str) -> dict | None:
+        """GeoJSON from a GetFeature POST. Servers that don't know
+        ``application/geo+json`` (GeoServer only offers ``application/json``)
+        reject it with an exception report, so the request is retried once
+        with the plain JSON format."""
+
         try:
             response = self._client.post(url, content=body, headers={"Content-Type": "text/xml"})
+            if response.status_code >= 400 and _GEO_JSON_FORMAT in body:
+                response = self._client.post(
+                    url, content=body.replace(_GEO_JSON_FORMAT, _JSON_FORMAT), headers={"Content-Type": "text/xml"}
+                )
             response.raise_for_status()
             return response.json()
         except (httpx.HTTPError, ValueError) as exc:

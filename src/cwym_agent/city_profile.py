@@ -36,6 +36,7 @@ from pydantic import (
     model_validator,
 )
 
+from cwym_agent.geodata.portal_catalog_resolver import name_key
 from cwym_agent.language import SUPPORTED_LANGUAGES
 
 DEFAULT_PROFILE = "hamburg"
@@ -84,7 +85,11 @@ class DefaultLocation(_Strict):
 
 
 class GeocoderConfig(_Strict):
-    adapter: Literal["hamburg_addr_search"]
+    adapter: Literal["hamburg_addr_search", "es_search_template"]
+    template_id: str = Field(default="addr_search", min_length=1)
+    """The Elasticsearch search template to call."""
+    query_param: str = Field(default="query_str", min_length=1)
+    """The template parameter that carries the user's query."""
     url: HttpUrlStr
     # Raw place types of the service that count as areas (preferred over
     # street hits for a bare place name).
@@ -94,7 +99,7 @@ class GeocoderConfig(_Strict):
 
 
 class LayerCatalogConfig(_Strict):
-    adapter: Literal["hamburg_layers_es"]
+    adapter: Literal["hamburg_layers_es", "es_layer_index"]
     url: HttpUrlStr
 
 
@@ -104,13 +109,26 @@ class BoundaryCollection(_Strict):
 
 
 class BoundariesConfig(_Strict):
-    adapter: Literal["ogc_api_features"]
+    adapter: Literal["ogc_api_features", "wfs"]
     url: HttpUrlStr
+    """ogc_api_features: the landing page; wfs: the WFS endpoint, and
+    ``collection`` is then the type name including its prefix."""
     # Prefixes the geocoder puts on some area names that the boundary
     # dataset doesn't have (e.g. "<City>-North" -> "North").
     strip_name_prefixes: list[str] = Field(default_factory=list)
     # CWYM location kind -> collection holding its official outlines.
     collections: dict[LocationKind, BoundaryCollection] = Field(min_length=1)
+
+
+class NamedArea(_Strict):
+    """An area the geocoder doesn't know (e.g. a project area), named in
+    the profile; its outline is the union of the features of a boundary
+    source collection."""
+
+    name: str = Field(min_length=1)
+    kind: LocationKind
+    collection: str = Field(min_length=1)
+    aliases: list[str] = Field(default_factory=list)
 
 
 class AnalysisAgentConfig(_Strict):
@@ -248,7 +266,7 @@ class PromptConfig(_Strict):
     """City-specific wording in the prompts and tool descriptions (German)."""
 
     city_genitive: str = Field(min_length=1)
-    """e.g. "Münchens" ("Münchens Geodaten-Katalog")."""
+    """e.g. "Bremens" ("Bremens Geodaten-Katalog")."""
     area_terms: list[str] = Field(min_length=1)
     """Words for the city's areas, most common first, e.g. ["Stadtteil",
     "Bezirk"]."""
@@ -263,7 +281,7 @@ class PromptConfig(_Strict):
 class CityProfile(_Strict):
     id: str = Field(pattern=r"^[a-z][a-z0-9_-]*$")
     name: str = Field(min_length=1)
-    """Short city name used in prompts and replies, e.g. "München"."""
+    """Short city name used in prompts and replies, e.g. "Bremen"."""
     official_name: str = Field(min_length=1)
     languages: list[str] = Field(min_length=1)
     """Supported answer languages, ISO 639-1; the first is the default."""
@@ -274,6 +292,9 @@ class CityProfile(_Strict):
     layer_catalog: LayerCatalogConfig
     boundaries: BoundariesConfig
     prompt: PromptConfig
+    named_areas: list[NamedArea] = Field(default_factory=list)
+    """Areas the geocoder doesn't know, e.g. a project area; the outline is
+    the union of all features of `collection`."""
     analysis_agent: AnalysisAgentConfig | None = None
     """None: the city has no tier 2 analysis agent."""
     datasets: dict[Identifier, DatasetConfig] = Field(default_factory=dict)
@@ -339,6 +360,16 @@ class CityProfile(_Strict):
                 f"boundaries.collections has kinds {unknown} that no geocoder.place_types entry produces "
                 f"(known kinds: {sorted(kinds)})"
             )
+        known_names: set[str] = set()
+        for area in self.named_areas:
+            if area.kind in kinds:
+                raise ValueError(
+                    f"named_areas {area.name!r} has kind {area.kind!r}, which the geocoder already produces"
+                )
+            for name in (area.name, *area.aliases):
+                if name_key(name) in known_names:
+                    raise ValueError(f"named_areas name or alias {name!r} is used twice")
+                known_names.add(name_key(name))
         for key, dataset in self.datasets.items():
             texts = {f"datasets.{key}.label": dataset.label} | {
                 f"datasets.{key}.attributes.{name}.label": attribute.label
@@ -367,7 +398,7 @@ class CityProfile(_Strict):
     @property
     def location_kinds(self) -> list[str]:
         """CWYM location kinds this city knows (e.g. bezirk, stadtteil, address)."""
-        return sorted(set(self.geocoder.place_types.values()))
+        return sorted(set(self.geocoder.place_types.values()) | {a.kind for a in self.named_areas})
 
 
 def profiles_dir() -> Path:
