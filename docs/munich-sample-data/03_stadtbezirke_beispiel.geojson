@@ -1,0 +1,43 @@
+{
+  "type": "FeatureCollection",
+  "features": [
+    {
+      "type": "Feature",
+      "id": "11",
+      "geometry": {
+        "type": "MultiPolygon",
+        "coordinates": [[[
+          [11.5300, 48.1750],
+          [11.5700, 48.1720],
+          [11.6100, 48.1780],
+          [11.6050, 48.2150],
+          [11.5600, 48.2180],
+          [11.5280, 48.2050],
+          [11.5300, 48.1750]
+        ]]]
+      },
+      "properties": {
+        "bezirk_nr": "11",
+        "bezirk_name": "Milbertshofen-Am Hart"
+      }
+    },
+    {
+      "type": "Feature",
+      "id": "12",
+      "geometry": {
+        "type": "MultiPolygon",
+        "coordinates": [[[
+          [11.6100, 48.1780],
+          [11.6600, 48.1750],
+          [11.6700, 48.2200],
+          [11.6050, 48.2150],
+          [11.6100, 48.1780]
+        ]]]
+      },
+      "properties": {
+        "bezirk_nr": "12",
+        "bezirk_name": "Schwabing-Freimann"
+      }
+    }
+  ]
+}
