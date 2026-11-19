@@ -92,8 +92,8 @@ body.
 - [uv](https://docs.astral.sh/uv/)
 - Network access to the Qwen3 vLLM server (see `CWYM_QWEN3_BASE_URL`
   below; defaults to the internal deployment used during development)
-  and to Hamburg's public geodata APIs (`api.hamburg.de`,
-  `geodienste.hamburg.de`)
+  and to the city's public geodata APIs (Hamburg: `api.hamburg.de`,
+  `geodienste.hamburg.de`; Munich: `geoportal.muenchen.de`)
 
 Note: `torch` (a `sentence-transformers` dependency, used for layer
 embedding) is pinned to CPU-only wheels via `[tool.uv.sources]` in
@@ -155,7 +155,10 @@ CWYM is one codebase with one deployment per city (ADR-002,
 city-specific - name, languages, default location and extent, geocoder,
 layer catalog, boundary dataset, tier 2 analysis agent - lives in
 `profiles/<city>/profile.yaml`; the schema and its checks are in
-`cwym_agent.city_profile`. `profiles/hamburg/profile.yaml` is the default.
+`cwym_agent.city_profile`. `profiles/hamburg/profile.yaml` is the default;
+`profiles/munich/profile.yaml` is the Munich profile (ASCEND portal
+Harthof). How to start a profile: see "Choosing the city profile" under
+"Run".
 
 The profile is loaded and validated once at startup and passed into
 `build_pipeline`:
@@ -169,7 +172,12 @@ The profile is loaded and validated once at startup and passed into
   `default_location` with the city `extent`, which is also the fallback
   when no place is found and the zoom limit for UDP result layers.
 - Location kinds (`bezirk`, `stadtteil`, ...) are the values of
-  `geocoder.place_types`; client state with other kinds is dropped.
+  `geocoder.place_types` plus the kinds of `named_areas`; client state
+  with other kinds is dropped.
+- `named_areas` declares places the geocoder doesn't know, e.g. a project
+  area: a name, aliases, a kind and the boundary collection whose
+  features form the outline. They are checked before the geocoder.
+  Munich declares Harthof (kind `projektgebiet`) this way.
 - Prompts and tool descriptions are templates worded with the `prompt`
   section (city genitive, area terms, example places and layer,
   neighbouring regions); `analysis_agent.example_question` goes into the
@@ -181,9 +189,13 @@ The profile is loaded and validated once at startup and passed into
   one on switches the others off. Hamburg has none.
 
 A new city needs a profile and, where its services differ from existing
-adapters, an adapter module plus its name in the profile schema.
+adapters, an adapter module plus its name in the profile schema. The
+generic adapters cover Elasticsearch address search templates
+(`es_search_template`), Elasticsearch layer indexes (`es_layer_index`) and
+boundaries from OGC API Features (`ogc_api_features`) or WFS (`wfs`).
 Nothing city-specific may live elsewhere in `src/` -
-`tests/test_no_city_in_core.py` fails on Hamburg outside its adapters,
+`tests/test_no_city_in_core.py` fails on Hamburg outside its adapters
+and on Munich anywhere in `src/`,
 and `tests/test_prompt_snapshots.py` keeps Hamburg's rendered prompts
 byte-identical (`CWYM_UPDATE_SNAPSHOTS=1` regenerates them after an
 intended change).
@@ -274,8 +286,40 @@ uv run uvicorn cwym_agent.api.main:app --port 8082 --reload
 
 (or `make run`, see below)
 
+### Choosing the city profile
+
+The city is chosen once at startup with `CWYM_CITY_PROFILE` (default
+`hamburg`); one running backend serves one city. The available profiles
+are the directories under `profiles/`:
+
+| Profile | Start locally | Startup |
+|---|---|---|
+| `hamburg` (default) | `make run` | a few minutes (embeds ~6,500 layers) |
+| `munich` | `CWYM_CITY_PROFILE=munich make run` | ~2-3 minutes (35 layers of the ASCEND Harthof portal) |
+
+The same works with the plain command
+(`CWYM_CITY_PROFILE=munich uv run uvicorn cwym_agent.api.main:app --port 8082`)
+and with `make run-offvpn`. To run two cities side by side, start the
+second one on another port (`--port 8083`).
+
+`CWYM_CITY_PROFILE` also takes a path to a profile YAML outside the repo
+(`CWYM_CITY_PROFILE=/path/to/profile.yaml`). An unknown name or an invalid
+profile stops the server at startup with a message naming the file and
+field.
+
+In Docker, set the profile in `.env` (read by `compose.yaml`):
+
+```bash
+echo "CWYM_CITY_PROFILE=munich" >> .env
+make docker-up
+```
+
+To check which city a running backend serves, send a question with a
+place of that city, or look at the startup log: the layer catalog URL it
+fetches comes from the profile.
+
 Note: startup takes a few minutes on first run - it eagerly fetches and
-embeds Hamburg's ~6,500 map layers (and downloads the embedding/reranker
+embeds the city's map layers (Hamburg: ~6,500) (and downloads the embedding/reranker
 models on the very first run) before accepting traffic. Subsequent
 restarts re-fetch the catalog but reuse the already-downloaded models.
 Startup progress (catalog fetch, embedding, index ready) is logged at
