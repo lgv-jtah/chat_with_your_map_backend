@@ -105,3 +105,15 @@ class TestLocationResolver:
 
     def test_no_hit(self):
         assert LocationResolver(_FixedGeocoder(None), _NoBoundaries()).resolve("x") is None
+
+
+def test_collection_outline_unions_all_features():
+    def handle(request: httpx.Request) -> httpx.Response:
+        assert request.url.path.endswith("/collections/bezirke/items")
+        square = lambda x: {"type": "Polygon", "coordinates": [[[x, 0], [x + 1, 0], [x + 1, 1], [x, 1], [x, 0]]]}
+        return httpx.Response(200, json={"features": [{"geometry": square(0)}, {"geometry": square(5)}]})
+
+    outline = _boundaries(httpx.Client(transport=httpx.MockTransport(handle))).collection_outline("bezirke")
+
+    assert outline["type"] == "MultiPolygon"
+    assert len(outline["coordinates"]) == 2

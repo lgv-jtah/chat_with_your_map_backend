@@ -21,6 +21,7 @@ from collections.abc import Mapping, Sequence
 
 import httpx
 from shapely.geometry import mapping, shape
+from shapely.ops import unary_union
 
 from cwym_agent.geodata.portal_catalog_resolver import name_key
 
@@ -53,6 +54,7 @@ class OgcApiFeaturesBoundaries:
         self._client = http_client
         self._names: dict[str, tuple[float, dict[str, str]]] = {}
         self._outlines: dict[tuple[str, str], tuple[float, dict | None]] = {}
+        self._collection_outlines: dict[str, tuple[float, dict | None]] = {}
 
     def outline(self, name: str, kind: str) -> dict | None:
         if kind not in self.collections or not name:
@@ -65,6 +67,26 @@ class OgcApiFeaturesBoundaries:
         official = self._official_name(name, kind)
         outline = self._fetch(official, kind) if official else None
         self._outlines[cache_key] = (time.monotonic(), outline)
+        return outline
+
+    def collection_outline(self, collection: str) -> dict | None:
+        cached = self._collection_outlines.get(collection)
+        if cached is not None and time.monotonic() - cached[0] < _CACHE_TTL:
+            return cached[1]
+
+        data = self._get(f"{collection}/items", {"f": "json", "limit": 500})
+        try:
+            geometries = [shape(f["geometry"]) for f in (data or {}).get("features") or [] if f.get("geometry")]
+            outline = (
+                json.loads(json.dumps(mapping(unary_union(geometries).simplify(_SIMPLIFY_TOLERANCE, preserve_topology=True))))
+                if geometries
+                else None
+            )
+        except (ValueError, TypeError, AttributeError) as exc:
+            logger.warning("Unusable outline for collection %r (%s)", collection, exc)
+            return None
+        if outline is not None:
+            self._collection_outlines[collection] = (time.monotonic(), outline)
         return outline
 
     def _official_name(self, name: str, kind: str) -> str | None:

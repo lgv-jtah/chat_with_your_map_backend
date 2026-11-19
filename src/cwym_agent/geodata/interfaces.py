@@ -45,6 +45,12 @@ class BoundarySource(Protocol):
         such area, doesn't cover that kind, or fails."""
         ...
 
+    def collection_outline(self, collection: str) -> dict | None:
+        """The union of all features of ``collection`` (GeoJSON
+        Polygon/MultiPolygon, WGS84), or None if it is empty or the
+        request fails."""
+        ...
+
 
 class LayerCatalogSource(Protocol):
     """A city's map layer catalog, indexed once by ``LayerSearchService``."""

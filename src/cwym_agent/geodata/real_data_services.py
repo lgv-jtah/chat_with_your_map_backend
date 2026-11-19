@@ -132,6 +132,7 @@ class RealDataServices:
         self.locations = locations or LocationResolver(
             build_geocoder(profile.geocoder, self.settings, http_client),
             build_boundary_source(profile.boundaries, self.settings, http_client),
+            profile.named_areas,
         )
         self.layer_search = layer_search or LayerSearchService(
             build_layer_catalog_source(profile.layer_catalog, self.settings, http_client), self.settings

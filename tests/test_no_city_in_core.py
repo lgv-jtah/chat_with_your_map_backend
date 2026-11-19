@@ -19,6 +19,7 @@ from pathlib import Path
 SRC = Path(__file__).resolve().parents[1] / "src" / "cwym_agent"
 
 CITY_PATTERN = re.compile(r"Hamburg|HAMBURG|hamburg\.de")
+MUNICH_PATTERN = re.compile(r"München|Münchens|Muenchen|Munich|muenchen\.de|Harthof")
 
 ALLOWED = (
     "geodata/adapters/hamburg_*.py",
@@ -54,3 +55,19 @@ def test_the_guard_sees_the_adapters():
     adapters = [p for p in SRC.rglob("*.py") if _allowed(p)]
     assert any(p.name == "hamburg_addr_search.py" for p in adapters)
     assert any(CITY_PATTERN.search(p.read_text(encoding="utf-8")) for p in adapters)
+
+
+def test_no_munich_outside_its_profile():
+    hits = [
+        f"{path.relative_to(SRC)}:{number}: {line.strip()}"
+        for path in sorted(SRC.rglob("*.py"))
+        for number, line in enumerate(path.read_text(encoding="utf-8").splitlines(), start=1)
+        if MUNICH_PATTERN.search(line)
+    ]
+
+    assert not hits, "Munich-specific text in src/ - move it to profiles/munich/profile.yaml:\n" + "\n".join(hits)
+
+
+def test_the_munich_guard_sees_the_profile():
+    profile = SRC.parents[1] / "profiles" / "munich" / "profile.yaml"
+    assert MUNICH_PATTERN.search(profile.read_text(encoding="utf-8"))

@@ -337,3 +337,23 @@ class TestExactAreaCheck:
         assert len(result.features["features"]) == 1
         assert result.number_matched is None
         assert result.truncated
+
+
+class TestOutputFormatFallback:
+    def test_retries_with_plain_json_when_geo_json_is_rejected(self):
+        formats: list[str] = []
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            body = request.content.decode()
+            formats.append("geo+json" if "application/geo+json" in body else "json")
+            if "application/geo+json" in body:
+                return httpx.Response(400, text="<ows:ExceptionReport/>")
+            return httpx.Response(200, json={"type": "FeatureCollection", "features": []})
+
+        client = WfsClient(http_client=httpx.Client(transport=httpx.MockTransport(handler)))
+
+        assert client._post("http://x/wfs", build_get_feature("t", _NS, "", 5)) == {
+            "type": "FeatureCollection",
+            "features": [],
+        }
+        assert formats == ["geo+json", "json"]

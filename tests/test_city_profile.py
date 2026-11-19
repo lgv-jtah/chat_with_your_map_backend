@@ -119,6 +119,34 @@ def test_id_must_match_directory(tmp_path, monkeypatch):
         load_profile("testcity")
 
 
+def test_hamburg_geocoder_defaults_to_its_template():
+    profile = load_profile("hamburg")
+
+    assert (profile.geocoder.template_id, profile.geocoder.query_param) == ("addr_search", "query_str")
+    assert profile.named_areas == []
+
+
+_AREA = {"name": "Nord", "kind": "projektgebiet", "collection": "x", "aliases": ["Nordgebiet"]}
+
+
+@pytest.mark.parametrize(
+    "areas, expected",
+    [
+        ([_AREA, {**_AREA, "name": "Süd", "aliases": ["nordgebiet"]}], "used twice"),
+        ([{**_AREA, "kind": "bezirk"}], "already produces"),
+    ],
+)
+def test_invalid_named_areas(tmp_path, monkeypatch, areas, expected):
+    with pytest.raises(CityProfileError, match=expected):
+        _load_variant(tmp_path, monkeypatch, lambda d: d.update(named_areas=areas))
+
+
+def test_named_area_adds_its_kind(tmp_path, monkeypatch):
+    profile = _load_variant(tmp_path, monkeypatch, lambda d: d.update(named_areas=[_AREA]))
+
+    assert profile.location_kinds == ["address", "bezirk", "projektgebiet", "stadtteil"]
+
+
 @pytest.mark.parametrize(
     "mutate, expected",
     [
