@@ -23,3 +23,29 @@ All WFS geometries were simplified once with shapely `simplify(0.0005)`.
 `EPSG:4326` returns lon/lat order (lon ~11.5, lat ~48.1) - no CRS84 needed.
 `wfs_stadtbezirk.json` has 27 features: "Untergiesing-Harlaching" and
 "Thalkirchen-Obersendling-Forstenried-Fürstenried-Solln" each have two.
+
+## ASCEND buildings (CHAT-12)
+
+```
+G=https://geoportal.muenchen.de/geoserver/gsm_wfs/wfs
+curl -s "$G?SERVICE=WFS&VERSION=2.0.0&REQUEST=DescribeFeatureType&TYPENAMES=ascend_gebaeude_gfi_wfs"   # wfs_ascend_gebaeude_describe.xml, unmodified
+```
+
+`wfs_ascend_gebaeude_sample.json`: POST to `$G` (Content-Type `text/xml`) with
+the body of `wfs_filter.build_get_feature("ascend_gebaeude_gfi_wfs", "gsm_wfs", "", 1000)`
+and `outputFormat="application/json"` (GeoServer rejects `geo+json`). The
+real service returned 273 buildings; the fixture keeps 25 of them with
+properties untouched, geometries simplified with shapely `simplify(0.00005)`
+(inner rings kept; `numberMatched`/`totalFeatures`/`numberReturned` set to 25).
+
+Selection (to cover every case the tests need): every value of
+`gebäudezustand` (incl. `Abgerissen`, 1 building), `eigentuemer`, `nutzung`
+and `energieeffizienzklasse` (11 without a class, 5 × H; no `A+` exists in the
+data); `pv_leistung` as strings with decimal comma (`57,04` twice, `64,4`,
+`12,96`, `27`, `2,2`, `35`) and 18 nulls; the one building with an inner ring
+(Schleißheimer Straße 450); `Hugo-Wolf-Straße 70` (3 buildings) and
+`Wegenerstraße 17` (2). All 273 real buildings, hence all 25, lie inside
+Harthof and in the single Stadtbezirk Milbertshofen-Am Hart, so no recorded
+building is outside; the local outline check is tested with a small box.
+Expected numbers in `test_munich_tier1.py` are literals counted from these
+25 features.

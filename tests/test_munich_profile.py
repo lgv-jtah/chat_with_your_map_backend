@@ -7,8 +7,9 @@ from pathlib import Path
 import httpx
 import pytest
 
-from cwym_agent.city_profile import available_profiles, load_profile
+from cwym_agent.city_profile import WfsSourceConfig, available_profiles, load_profile
 from cwym_agent.components.agent_executor import AgentExecutorComponent
+from cwym_agent.components.command_builder import apply_exclusive_groups
 from cwym_agent.geodata.adapters import build_boundary_source, build_geocoder, build_layer_catalog_source
 from cwym_agent.geodata.filter_agent import FilterAgent
 from cwym_agent.geodata.locations import LocationResolver
@@ -296,3 +297,50 @@ class TestFilters:
 )
 def test_language(query: str, language: str):
     assert resolve_language(query, [], None, PROFILE.languages).code == language
+
+
+class TestBuildingsDataset:
+    """CHAT-12: the ASCEND buildings (WFS ``ascend_gebaeude_gfi_wfs``)."""
+
+    _ATTRIBUTES = [
+        "eigentuemer", "nutzung", "baujahr", "geschosse", "energieeffizienzklasse",
+        "gebäudezustand", "fernwaerme", "photovoltaik_23", "pv_leistung",
+    ]
+
+    def test_buildings_dataset_declared(self):
+        dataset = PROFILE.datasets["buildings"]
+
+        assert isinstance(dataset.source, WfsSourceConfig)
+        assert dataset.source.url == "https://geoportal.muenchen.de/geoserver/gsm_wfs/wfs"
+        assert dataset.source.feature_type == "ascend_gebaeude_gfi_wfs"  # the client adds the namespace
+        assert dataset.id_field == "gebid" and dataset.lookup_field == "adresse"
+        assert list(dataset.attributes) == self._ATTRIBUTES
+        assert "sanierungsmassnahme" not in dataset.attributes and "plz" not in dataset.attributes
+        for attribute in dataset.attributes.values():
+            assert attribute.label["de"] and attribute.label["en"]
+        assert dataset.attributes["energieeffizienzklasse"].order[0] == "A+"
+
+    def test_declared_attributes_exist_on_the_server(self):
+        describe = (FIXTURES / "wfs_ascend_gebaeude_describe.xml").read_text(encoding="utf-8")
+
+        for name in ("gebid", "adresse", *self._ATTRIBUTES):
+            assert f'name="{name}"' in describe
+
+    def test_dataset_layers_exist_in_layer_index(self):
+        dataset = PROFILE.datasets["buildings"]
+        ids = {hit["_source"]["id"] for hit in _json("layers_all.json")["hits"]["hits"]}
+        used = set(dataset.layers) | {a.display_layer for a in dataset.attributes.values() if a.display_layer}
+        used |= {layer for group in PROFILE.exclusive_layer_groups for layer in group}
+
+        assert used <= ids
+
+    def test_exclusive_group(self):
+        group = PROFILE.exclusive_layer_groups[0]
+        activate = {"commandId": "c", "type": "ACTIVATE_LAYER", "payload": {"layerIds": ["gsm:ascend_baugruppen_energieeffizienzklasse"]}}
+
+        commands = apply_exclusive_groups([activate], PROFILE.exclusive_layer_groups)
+
+        assert len(group) == 8 and "gsm:ascend_gebaeude_gfi" not in group
+        assert [c["type"] for c in commands] == ["DEACTIVATE_LAYER", "ACTIVATE_LAYER"]
+        assert set(commands[0]["payload"]["layerIds"]) == set(group) - {"gsm:ascend_baugruppen_energieeffizienzklasse"}
+        assert len(commands[0]["payload"]["layerIds"]) == 7

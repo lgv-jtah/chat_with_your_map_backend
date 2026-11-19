@@ -62,3 +62,67 @@ prompt:
     layer_name: ASCEND Energieeffizienzklasse | building energy efficiency class
     official_term: Energieeffizienzklasse
     official_term_reason: die Energiebewertung eines Gebäudes
+
+# Tier 1 analysis of the ASCEND buildings. Source: the WFS, not yet confirmed
+# by Munich; config only. The feature type has no prefix: the client adds the
+# server's targetNamespace (gsm_wfs) itself.
+datasets:
+  buildings:
+    label: {de: Gebäude, en: buildings}
+    source:
+      type: wfs
+      url: https://geoportal.muenchen.de/geoserver/gsm_wfs/wfs
+      feature_type: ascend_gebaeude_gfi_wfs
+    id_field: gebid
+    lookup_field: adresse
+    layers:
+      - gsm:ascend_gebaeude_gfi
+      - gsm:ascend_baugruppen_sanierung
+      - gsm:ascend_baugruppen_pv
+      - gsm:ascend_baugruppen_pv_stand
+    attributes:
+      eigentuemer:
+        label: {de: Eigentümer, en: owner}
+        type: category
+        display_layer: gsm:ascend_baugruppen_eigentuemer
+      nutzung:
+        label: {de: Nutzung, en: use}
+        type: category
+        display_layer: gsm:ascend_baugruppen_nutzung
+      baujahr:
+        label: {de: Baujahr, en: year of construction}
+        type: number
+        bin_width: 10
+        display_layer: gsm:ascend_baugruppen_baujahr
+      geschosse:
+        label: {de: Geschosse, en: floors}
+        type: number
+      energieeffizienzklasse:
+        label: {de: Energieeffizienzklasse, en: energy efficiency class}
+        type: ordinal
+        order: [A+, A, B, C, D, E, F, G, H]
+        display_layer: gsm:ascend_baugruppen_energieeffizienzklasse
+      "gebäudezustand":
+        label: {de: Gebäudezustand, en: building condition}
+        type: category
+      fernwaerme:
+        label: {de: Fernwärme, en: district heating}
+        type: category
+        display_layer: gsm:ascend_baugruppen_fernwaerme
+      photovoltaik_23:
+        label: {de: Photovoltaik, en: photovoltaics}
+        type: category
+      pv_leistung:
+        label: {de: PV-Leistung (kWp), en: PV output (kWp)}
+        type: number
+
+# Alternative colourings of the same buildings: one visible at a time.
+exclusive_layer_groups:
+  - - gsm:ascend_baugruppen_baujahr
+    - gsm:ascend_baugruppen_energieeffizienzklasse
+    - gsm:ascend_baugruppen_eigentuemer
+    - gsm:ascend_baugruppen_nutzung
+    - gsm:ascend_baugruppen_sanierung
+    - gsm:ascend_baugruppen_fernwaerme
+    - gsm:ascend_baugruppen_pv
+    - gsm:ascend_baugruppen_pv_stand
