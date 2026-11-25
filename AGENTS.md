@@ -3,4 +3,4 @@
 ## Pipeline
 - Base branch: main
 - Checks: `uv run pytest`
-- Jira review status: In Review
+- Jira review status: warte auf Abnahme/PR
