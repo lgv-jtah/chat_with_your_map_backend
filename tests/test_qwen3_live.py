@@ -57,3 +57,33 @@ def test_generate_produces_non_empty_german_text(client: Qwen3Client):
 
     assert result.strip() != ""
     assert "".join(content_chunks) == result
+
+
+_ANALYSIS_QUESTIONS = [
+    ("munich", "Wie verteilen sich die Energieklassen?"),
+    ("munich", "Wie viele Gebäude gehören Münchner Wohnen?"),
+    ("hamburg", "Wie viele Schulen in Altona?"),
+    ("hamburg", "Wie viele Krankenhäuser gibt es?"),
+]
+
+
+@pytest.mark.parametrize(("city", "question"), _ANALYSIS_QUESTIONS)
+def test_analysis_question_plans_filter_agent_with_operation(client: Qwen3Client, city: str, question: str):
+    # Hamburg's "Schulen in Altona" may legitimately go to udp_analysis.
+    allow_udp = (city, question) == ("hamburg", "Wie viele Schulen in Altona?")
+    request = plan_request(load_profile(city), "de")
+    plans: list[list[dict]] = []
+
+    for _ in range(3):
+        steps = client.plan(question, **request)["steps"]
+        plans.append(steps)
+        if any(s["agent_name"] == "filter_agent" and s.get("args", {}).get("operation") for s in steps):
+            return
+        if allow_udp and any(s["agent_name"] == "udp_analysis" for s in steps):
+            return
+
+    pytest.fail(
+        "no filter_agent with operation in 3 attempts"
+        + (" (udp_analysis would also be accepted for this question)" if allow_udp else "")
+        + f": {plans}"
+    )
