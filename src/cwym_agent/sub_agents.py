@@ -126,10 +126,13 @@ def sub_agent_specs(profile: CityProfile) -> list[SubAgentSpec]:
                 f"{places[0]}'). Auch für einfache AUSWERTUNGEN einer Ebene: Anzahl "
                 "('Wie viele ...?'), Verteilung, Rangliste ('die 5 ältesten ...'), "
                 "kleinster/größter Wert, Durchschnitt, Summe, Suche nach einer Adresse - "
-                "dann 'operation' setzen. Rufe in diesem Fall IMMER auch layer_resolver "
-                "auf (welche Ebene) und, falls ein Ort genannt wird, "
-                "location_extractor (für eine räumliche Einschränkung) - "
-                "filter_agent nutzt deren Ergebnisse."
+                "dann 'operation' setzen. Rufe filter_agent dann IMMER IN DERSELBEN "
+                "ANTWORT zusammen mit layer_resolver auf (welche Ebene) und, falls "
+                "ein Ort genannt wird, mit location_extractor (räumliche "
+                "Einschränkung) - alle Werkzeuge gleichzeitig, NICHT nacheinander: "
+                "es gibt nur diese eine Planungsrunde, das System führt "
+                "filter_agent automatisch nach den anderen aus und übergibt ihm "
+                "deren Ergebnisse."
             ),
             parameters={
                 "type": "object",

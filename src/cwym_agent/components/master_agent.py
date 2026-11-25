@@ -19,6 +19,7 @@ already active.
 """
 
 import logging
+import re
 from typing import Any
 
 from haystack import component
@@ -47,6 +48,26 @@ _PLAN_SYSTEM_PROMPT = (
     "Wenn die Anfrage keinen Bezug zur Karte hat (z.B. Small Talk), rufe "
     "kein Werkzeug auf."
 )
+
+_ANALYSIS_PATTERNS: tuple[tuple[re.Pattern[str], str], ...] = (
+    (re.compile(r"\bwie viele\b|\banzahl\b|\bhow many\b|\bnumber of\b"), "count"),
+    (re.compile(r"\bverteil|\bdistribution\b|\bbreakdown\b"), "distribution"),
+)
+
+
+def _with_missing_analysis_step(steps: list[dict], query: str) -> list[dict]:
+    """Append a filter_agent step when an analysis question was planned with
+    layer_resolver only. There is a single planning round, so a filter_agent
+    the model leaves out would never run and the question stays unanswered."""
+
+    names = {step.get("agent_name") for step in steps}
+    if "layer_resolver" not in names or names & {"filter_agent", "udp_analysis"}:
+        return steps
+    lowered = query.lower()
+    for pattern, operation in _ANALYSIS_PATTERNS:
+        if pattern.search(lowered):
+            return [*steps, {"agent_name": "filter_agent", "args": {"query": query, "operation": operation}}]
+    return steps
 
 
 def plan_request(profile: CityProfile, language: str) -> dict:
@@ -99,6 +120,13 @@ class MasterAgentComponent:
             plan = self.llm.plan(prompt, **request)
 
         steps = plan.get("steps", [])
+        completed = _with_missing_analysis_step(steps, query)
+        if completed is not steps:
+            operation = completed[-1]["args"]["operation"]
+            logger.info("master_agent: analysis question without filter_agent - added filter_agent(%s)", operation)
+            observability.note("implicit filter_agent added: analysis question planned only layer_resolver")
+            plan = {**plan, "steps": completed}
+            steps = completed
         if not steps:
             logger.info("master_agent: empty plan - no sub-agent will run")
         elif observability.content_logged():

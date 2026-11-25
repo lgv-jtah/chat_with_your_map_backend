@@ -74,3 +74,59 @@ class TestBuildPlanningPrompt:
         # The prompt sent to the LLM is enriched, but run() doesn't leak
         # it anywhere else - only plan_json is returned.
         assert "Kontaktformular öffnen" in llm.prompts[0]
+
+
+class _FixedPlanLlm:
+    def __init__(self, steps: list[dict]):
+        self.steps = steps
+
+    def plan(self, prompt: str, *, system_prompt, tools, streaming_callback=None):
+        return {"steps": list(self.steps)}
+
+
+def _planned(steps: list[dict], query: str, **kwargs) -> list[dict]:
+    component = MasterAgentComponent(_PROFILE, llm=_FixedPlanLlm(steps))
+    return component.run(query, **kwargs)["plan_json"]["steps"]
+
+
+_LAYER = {"agent_name": "layer_resolver", "args": {"query": "Energieklassen"}}
+
+
+class TestMissingAnalysisStep:
+    def test_distribution_added(self):
+        query = "Wie verteilen sich die Energieklassen?"
+        assert _planned([_LAYER], query) == [
+            _LAYER,
+            {"agent_name": "filter_agent", "args": {"query": query, "operation": "distribution"}},
+        ]
+
+    def test_count_added(self):
+        query = "Wie viele Schulen in Altona?"
+        steps = _planned([{"agent_name": "layer_resolver", "args": {"query": "Schulen"}}], query)
+        assert steps[-1] == {"agent_name": "filter_agent", "args": {"query": query, "operation": "count"}}
+
+    def test_existing_filter_agent_not_duplicated(self):
+        steps = [_LAYER, {"agent_name": "filter_agent", "args": {"query": "x", "operation": "count"}}]
+        assert _planned(steps, "Wie viele Schulen in Altona?") == steps
+
+    def test_plain_display_unchanged(self):
+        assert _planned([_LAYER], "Zeige die Energieeffizienzklasse") == [_LAYER]
+
+    def test_udp_analysis_unchanged(self):
+        steps = [_LAYER, {"agent_name": "udp_analysis", "args": {"query": "x"}}]
+        assert _planned(steps, "Wie viele Schulen in Altona?") == steps
+
+    def test_follow_up_filter_agent_without_layer_resolver_unchanged(self):
+        steps = [{"agent_name": "filter_agent", "args": {"layerId": "1732"}}]
+        assert _planned(steps, "Wie viele davon?") == steps
+
+    def test_empty_plan_stays_empty(self):
+        assert _planned([], "Wie viele Schulen in Altona?") == []
+
+    def test_context_wrapped_prompt_uses_raw_query(self):
+        query = "Wie viele Schulen in Altona?"
+        context = ConversationContext(
+            map_state=MapStateIn(active_layer_ids=["1732"]), history=[("user", "hallo")]
+        )
+        steps = _planned([_LAYER], query, context=context)
+        assert steps[-1]["args"]["query"] == query
