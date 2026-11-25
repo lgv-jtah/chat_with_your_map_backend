@@ -186,7 +186,8 @@ The profile is loaded and validated once at startup and passed into
   the first is the default). Hamburg offers both.
 - `exclusive_layer_groups` lists portal layers of which only one may be
   visible (e.g. alternative colourings of the same buildings): switching
-  one on switches the others off. Hamburg has none.
+  one on switches the others off. Hamburg has none; Munich groups its
+  eight `gsm:ascend_baugruppen_*` building colourings.
 
 A new city needs a profile and, where its services differ from existing
 adapters, an adapter module plus its name in the profile schema. The
@@ -239,7 +240,9 @@ no LLM rewords the numbers.
           display_layer: gsm:ascend_baugruppen_energieeffizienzklasse
   ```
 
-  Hamburg declares none yet, so in Hamburg tier 1 counts.
+  Hamburg declares none yet, so in Hamburg tier 1 counts. Munich declares
+  `buildings`, the ASCEND buildings read from the public WFS
+  (`ascend_gebaeude_gfi_wfs`).
 - **No number from part of the data.** Aggregates page through all
   matches up to `CWYM_ANALYSIS_MAX_FEATURES`; above that, or when a
   service fails, the reply says so instead of giving a number. Missing

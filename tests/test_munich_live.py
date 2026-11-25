@@ -7,12 +7,14 @@ import httpx
 import pytest
 
 from cwym_agent.city_profile import load_profile
+from cwym_agent.geodata.analysis_data import WfsSource
 from cwym_agent.geodata.adapters import build_boundary_source, build_geocoder, build_layer_catalog_source
 from cwym_agent.geodata.filter_agent import FilterAgent
 from cwym_agent.geodata.locations import LocationResolver
 from cwym_agent.geodata.real_data_services import RealDataServices
+from cwym_agent.geodata.wfs_filter import WfsClient
 from cwym_agent.geodata.settings import GeodataSettings
-from cwym_agent.geodata.types import LayerMatch
+from cwym_agent.geodata.types import FilterCondition, LayerMatch
 
 pytestmark = pytest.mark.skipif(
     os.environ.get("CWYM_LIVE_TESTS") != "1",
@@ -92,3 +94,29 @@ def test_energy_layer_in_both_languages(real_data_services: RealDataServices, qu
     result = real_data_services.resolve_layer(query)
 
     assert result is not None and "Energieeffizienz" in result.name
+
+
+class TestBuildingsLive:
+    """The real WFS behind the ``buildings`` dataset (CHAT-12), no LLM."""
+
+    @pytest.fixture
+    def source(self) -> WfsSource:
+        config = PROFILE.datasets["buildings"]
+        settings = GeodataSettings()
+        wfs = WfsClient(settings, httpx.Client(timeout=60))
+        schema = wfs.schema(config.source.url, config.source.feature_type)
+        assert schema is not None
+        return WfsSource(config.source.url, config.source.feature_type, schema, config.attributes, wfs, settings)
+
+    def test_whole_dataset(self, source: WfsSource):
+        assert source.fetch([], None, False).total >= 235
+
+    def test_energy_class_h(self, source: WfsSource):
+        found = source.fetch([FilterCondition("energieeffizienzklasse", "eq", "H")], None, True)
+
+        assert found.complete and 100 <= found.total <= 273  # 130 when written
+
+    def test_umlaut_attribute_in_the_post_body(self, source: WfsSource):
+        found = source.fetch([FilterCondition("gebäudezustand", "eq", "Abgerissen")], None, True)
+
+        assert found.complete and found.total > 0
